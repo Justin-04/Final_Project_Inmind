@@ -1,0 +1,42 @@
+import { BookOpen, Wrench, Tag, Cpu, Route } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import type { ChatTelemetry } from '@/services/api';
+
+const intentConfig = {
+  rag: { icon: BookOpen, label: 'RAG Agent', color: 'text-blue-300', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+  diagnostic: { icon: Wrench, label: 'Diagnostic', color: 'text-amber-300', bg: 'bg-amber-500/10', border: 'border-amber-500/30' },
+  pricing: { icon: Tag, label: 'Pricing', color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
+};
+
+export default function TelemetryBar({ telemetry }: { telemetry: ChatTelemetry }) {
+  const cfg = intentConfig[telemetry.intent] ?? intentConfig.rag;
+  const Icon = cfg.icon;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-mono">
+      {/* Intent tag */}
+      <div className={cn('flex items-center gap-1 rounded-md border px-2 py-1', cfg.bg, cfg.border, cfg.color)}>
+        <Icon className="h-3 w-3" />
+        <span className="font-semibold">{cfg.label}</span>
+      </div>
+
+      {/* Confidence */}
+      <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-[#0B0F19]/60 px-2 py-1 text-muted-foreground">
+        <span>Confidence</span>
+        <div className="w-16 h-1 rounded-full bg-white/10 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500"
+            style={{ width: `${telemetry.confidence}%` }}
+          />
+        </div>
+        <span className="text-cyan-300">{telemetry.confidence}%</span>
+      </div>
+
+      {/* Route */}
+      <div className="flex items-center gap-1 rounded-md border border-white/10 bg-[#0B0F19]/60 px-2 py-1 text-muted-foreground">
+        <Route className="h-3 w-3 text-cyan-400/60" />
+        <span>Route: <span className="text-cyan-300">{telemetry.route}</span> · {telemetry.iterations} iter</span>
+      </div>
+    </div>
+  );
+}

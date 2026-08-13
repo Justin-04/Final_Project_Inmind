@@ -1,0 +1,51 @@
+{
+  "error_codes": [
+    {
+      "code": "E001",
+      "name": "Compass Error",
+      "description": "Compass calibration failed or sensor error detected",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Move drone away from magnetic interference sources",
+        "Perform manual compass calibration",
+        "Restart the drone",
+        "Contact support if issue persists"
+      ],
+      "related_codes": ["E002", "E003"]
+    },
+    {
+      "code": "E002",
+      "name": "Compass Interference",
+      "description": "Magnetic field interference detected near drone",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Move to a location away from power lines and metal structures",
+        "Wait 30 seconds for magnetic field to stabilize",
+        "Retry compass calibration"
+      ],
+      "related_codes": ["E001"]
+    },
+    {
+      "code": "E003",
+      "name": "IMU Error",
+      "description": "Inertial measurement unit calibration failed",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Ensure drone is on a level surface",
+        "Perform IMU calibration using DJI Fly app",
+        "Restart drone",
+        "Contact support if persists"
+      ],
+      "related_codes": []
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "total_codes": 3,
+    "last_updated": "2024-01-01",
+    "supported_models": ["mini_4_pro", "air_3", "mavic_3_pro"]
+  }
+}

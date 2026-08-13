@@ -1,0 +1,132 @@
+version: '3.9'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - agent-system-a
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+  agent-system-a:
+    build:
+      context: ./services/agent-system-a
+      dockerfile: Dockerfile
+    container_name: agent-system-a
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - QDRANT_URL=http://vector-db:6333
+      - MCP_SERVER_URL=http://mcp-server:8002
+      - AGENT_B_URL=http://agent-system-b:8001
+      - WHISPER_URL=http://whisper-stt-service:9000
+      - MONGODB_URI=${MONGODB_URI}
+    depends_on:
+      - vector-db
+      - mcp-server
+      - agent-system-b
+      - whisper-stt-service
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+  agent-system-b:
+    build:
+      context: ./services/agent-system-b
+      dockerfile: Dockerfile
+    container_name: agent-system-b
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AGENT_B_MODEL=${AGENT_B_MODEL:-gpt-4o-mini}
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: ./services/mcp-server
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    ports:
+      - "8002:8002"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - QDRANT_URL=http://vector-db:6333
+      - REDIS_URL=redis://redis-cache:6379
+    depends_on:
+      - vector-db
+      - redis
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+  whisper-stt-service:
+    build:
+      context: ./services/whisper-stt-service
+      dockerfile: Dockerfile
+    container_name: whisper-stt-service
+    ports:
+      - "9000:9000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - AGENT_A_URL=http://agent-system-a:8000
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+  vector-db:
+    image: qdrant/qdrant:latest
+    container_name: vector-db
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+  redis:
+    image: redis/redis-stack:latest
+    container_name: redis-cache
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-storage:/data
+    networks:
+      - dji-rag-network
+    restart: unless-stopped
+
+networks:
+  dji-rag-network:
+    driver: bridge
+
+volumes:
+  qdrant-storage:
+    driver: local
+  redis-storage:
+    driver: local

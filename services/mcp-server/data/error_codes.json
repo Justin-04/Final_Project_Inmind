@@ -1,0 +1,178 @@
+{
+  "error_codes": [
+    {
+      "code": "E001",
+      "name": "Compass Error",
+      "description": "Compass calibration failed or sensor error detected",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Move drone away from magnetic interference sources",
+        "Perform manual compass calibration",
+        "Restart the drone",
+        "Contact support if issue persists"
+      ],
+      "related_codes": ["E002", "E003"]
+    },
+    {
+      "code": "E002",
+      "name": "Compass Interference",
+      "description": "Magnetic field interference detected near drone",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Move to a location away from power lines and metal structures",
+        "Wait 30 seconds for magnetic field to stabilize",
+        "Retry compass calibration"
+      ],
+      "related_codes": ["E001"]
+    },
+    {
+      "code": "E003",
+      "name": "IMU Error",
+      "description": "Inertial measurement unit calibration failed",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Ensure drone is on a level surface",
+        "Perform IMU calibration using DJI Fly app",
+        "Restart drone",
+        "Contact support if persists"
+      ],
+      "related_codes": []
+    },
+    {
+      "code": "E004",
+      "name": "GPS Signal Weak",
+      "description": "Insufficient GPS satellite signal for stable positioning",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Move to an open area with clear sky view",
+        "Wait 30-60 seconds for GPS acquisition",
+        "Check if antenna is obstructed",
+        "Avoid flying near tall buildings or dense tree cover"
+      ],
+      "related_codes": ["E005"]
+    },
+    {
+      "code": "E005",
+      "name": "Return-To-Home Failed",
+      "description": "RTH function failed due to GPS or compass issues",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Switch to manual control immediately",
+        "Verify GPS signal strength",
+        "Land manually and recalibrate compass",
+        "Set a new home point after landing"
+      ],
+      "related_codes": ["E001", "E004"]
+    },
+    {
+      "code": "E006",
+      "name": "Battery Low Warning",
+      "description": "Battery level dropped below safe threshold for return flight",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Return to home immediately",
+        "Reduce altitude to minimize power consumption",
+        "Land as soon as safely possible",
+        "Replace or charge battery before next flight"
+      ],
+      "related_codes": ["E007"]
+    },
+    {
+      "code": "E007",
+      "name": "Battery Critical",
+      "description": "Battery at critical level — forced landing imminent",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Drone will auto-land — clear landing area below",
+        "Cannot cancel forced landing at this level",
+        "After landing, inspect battery health in DJI Fly app",
+        "Replace battery if degraded"
+      ],
+      "related_codes": ["E006"]
+    },
+    {
+      "code": "E008",
+      "name": "Gimbal Overload",
+      "description": "Gimbal motor is overloaded or obstructed",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Power off the drone",
+        "Remove any obstructions from the gimbal",
+        "Remove gimbal protector if still attached",
+        "Restart and run gimbal auto-calibration"
+      ],
+      "related_codes": ["E009"]
+    },
+    {
+      "code": "E009",
+      "name": "Gimbal Calibration Error",
+      "description": "Gimbal calibration failed — sensor misalignment detected",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Place drone on flat, stable surface",
+        "Run gimbal calibration from DJI Fly app settings",
+        "Ensure no external vibration during calibration",
+        "Contact DJI support if calibration fails repeatedly"
+      ],
+      "related_codes": ["E008"]
+    },
+    {
+      "code": "E010",
+      "name": "Motor Blocked",
+      "description": "One or more motors are blocked or stalled",
+      "severity": "critical",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "DO NOT attempt to fly",
+        "Inspect propellers for debris or damage",
+        "Check that propellers are correctly mounted",
+        "Spin each motor gently by hand to check for resistance",
+        "Replace damaged propellers or contact support"
+      ],
+      "related_codes": []
+    },
+    {
+      "code": "E011",
+      "name": "Obstacle Avoidance Sensor Error",
+      "description": "Vision or infrared obstacle avoidance sensor malfunction",
+      "severity": "warning",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Clean sensor lenses with a soft cloth",
+        "Ensure sensors are not covered or fogged",
+        "Restart the drone",
+        "If persists, fly with obstacle avoidance disabled (use caution)"
+      ],
+      "related_codes": []
+    },
+    {
+      "code": "E012",
+      "name": "SD Card Error",
+      "description": "MicroSD card not detected or write error",
+      "severity": "info",
+      "affected_models": ["mini_4_pro", "air_3", "mavic_3_pro"],
+      "resolution_steps": [
+        "Remove and reinsert the microSD card",
+        "Format the card using DJI Fly app",
+        "Try a different compatible microSD card (U3/V30 recommended)",
+        "Check card for physical damage"
+      ],
+      "related_codes": []
+    }
+  ],
+  "metadata": {
+    "version": "1.1.0",
+    "total_codes": 12,
+    "last_updated": "2024-06-01",
+    "supported_models": ["mini_4_pro", "air_3", "mavic_3_pro"]
+  }
+}

@@ -1,0 +1,206 @@
+{
+  "timestamp": "2026-08-09T22:17:50.055507+00:00",
+  "total_tests": 12,
+  "passed": 12,
+  "failed": 0,
+  "overall_accuracy": 1.0,
+  "vendor_accuracy": 1.0,
+  "price_accuracy": 1.0,
+  "avg_latency": 11.14,
+  "by_category": {
+    "basic_pricing": {
+      "total": 3,
+      "passed": 3
+    },
+    "comparison": {
+      "total": 2,
+      "passed": 2
+    },
+    "stock_delivery": {
+      "total": 2,
+      "passed": 2
+    },
+    "combo_pricing": {
+      "total": 2,
+      "passed": 2
+    },
+    "edge_case": {
+      "total": 2,
+      "passed": 2
+    },
+    "deal_search": {
+      "total": 1,
+      "passed": 1
+    }
+  },
+  "results": [
+    {
+      "id": "TC-B-001",
+      "category": "basic_pricing",
+      "passed": true,
+      "latency": 13.69,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "The DJI Mini 4 Pro is priced consistently across all major retailers at $759 for the base model, $95",
+      "error": null
+    },
+    {
+      "id": "TC-B-002",
+      "category": "basic_pricing",
+      "passed": true,
+      "latency": 11.93,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "The DJI Air 3 is priced consistently across all retailers at $1099 for the base model and $1349 for ",
+      "error": null
+    },
+    {
+      "id": "TC-B-003",
+      "category": "basic_pricing",
+      "passed": true,
+      "latency": 11.22,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "All retailers have the same MSRP for the DJI Mavic 3 Pro. Stock and delivery information is currentl",
+      "error": null
+    },
+    {
+      "id": "TC-B-004",
+      "category": "comparison",
+      "passed": true,
+      "latency": 10.69,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "All retailers have the same base price of $759 for the DJI Mini 4 Pro. Stock and delivery informatio",
+      "error": null
+    },
+    {
+      "id": "TC-B-005",
+      "category": "comparison",
+      "passed": true,
+      "latency": 10.44,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "All retailers have the same base price for the DJI Air 3. Stock and delivery information is currentl",
+      "error": null
+    },
+    {
+      "id": "TC-B-006",
+      "category": "stock_delivery",
+      "passed": true,
+      "latency": 12.05,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "Pricing for the DJI Mini 4 Pro is consistent across all retailers at the MSRP. Unfortunately, I was ",
+      "error": null
+    },
+    {
+      "id": "TC-B-007",
+      "category": "stock_delivery",
+      "passed": true,
+      "latency": 10.21,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "All retailers have the same base price for the DJI Mavic 3 Pro. However, stock availability and deli",
+      "error": null
+    },
+    {
+      "id": "TC-B-008",
+      "category": "combo_pricing",
+      "passed": true,
+      "latency": 10.14,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "The Fly More Combo for the DJI Mini 4 Pro is priced at $959 across all major retailers. Stock availa",
+      "error": null
+    },
+    {
+      "id": "TC-B-009",
+      "category": "combo_pricing",
+      "passed": true,
+      "latency": 11.17,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "The DJI Air 3 is priced at $1099 for the base model and $1349 for the Fly More Combo across all reta",
+      "error": null
+    },
+    {
+      "id": "TC-B-010",
+      "category": "edge_case",
+      "passed": true,
+      "latency": 9.14,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": false,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "Unfortunately, I was unable to retrieve current pricing information for the DJI Phantom 5 from any m",
+      "error": null
+    },
+    {
+      "id": "TC-B-011",
+      "category": "edge_case",
+      "passed": true,
+      "latency": 11.18,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "The DJI Mini 4 Pro is available at a consistent MSRP across all retailers. However, stock availabili",
+      "error": null
+    },
+    {
+      "id": "TC-B-012",
+      "category": "deal_search",
+      "passed": true,
+      "latency": 11.84,
+      "vendors_returned": 4,
+      "vendors_correct": true,
+      "has_price": true,
+      "price_correct": true,
+      "model_correct": true,
+      "source": "llm_agent",
+      "summary": "The DJI Mini 4 Pro is currently listed at the same MSRP across all major retailers. There are no spe",
+      "error": null
+    }
+  ]
+}

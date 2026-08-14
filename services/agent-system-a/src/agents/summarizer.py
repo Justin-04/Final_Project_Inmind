@@ -165,8 +165,12 @@ Provide a grounded response:"""
         """
         Convert local image path to S3 URL.
 
-        Input:  'data/extracted_v2/images/DJI_Air_3_User_Manual_v1.6_EN_page60_img1.png'
-        Output: 'https://final-project-inmind.s3.eu-north-1.amazonaws.com/images/DJI_Air_3_User_Manual_v1.6_EN_page60_img1.png'
+        Handles various formats:
+        - 'data/extracted_v2/images/DJI_Air_3_..._page60_img1.png'
+        - 'C:/Users/.../DJI_Neo_..._page74_img0.png'
+        - Already a full URL
+
+        Output: 'https://final-project-inmind.s3.eu-north-1.amazonaws.com/images/<filename>'
         """
         S3_BASE = "https://final-project-inmind.s3.eu-north-1.amazonaws.com/images"
 
@@ -174,8 +178,7 @@ Provide a grounded response:"""
         if image_path.startswith("http"):
             return image_path
 
-        # Extract just the filename from the local path
-        # e.g., 'data/extracted_v2/images/DJI_Air_3_..._page60_img1.png' → 'DJI_Air_3_..._page60_img1.png'
-        filename = image_path.split("/")[-1]
+        # Extract just the filename — handle both / and \ separators
+        filename = image_path.replace("\\", "/").split("/")[-1]
 
         return f"{S3_BASE}/{filename}"

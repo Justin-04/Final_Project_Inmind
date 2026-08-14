@@ -1,90 +1,121 @@
 """
-Intent Classifier — Routes queries to the correct specialist agent.
+Intent Classifier — Fine-tuned DistilBERT.
 
-Placeholder: keyword-based classification.
-TODO: Replace with fine-tuned BERT model.
+Classifies queries into: rag, diagnostic, pricing
+Model: models/bert_intent_classifier/model/
 
-Intents:
-- "rag"        → technical specs, features, how-to, manual content
-- "diagnostic" → error codes, LED patterns, calibration failures
-- "pricing"    → cost, purchase, vendors, deals, availability
+Falls back to keyword-based classification if model isn't available.
 """
 
+import os
 import logging
 from typing import Dict, Any, List
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DIAGNOSTIC_KEYWORDS = [
-    "error", "code", "e00", "led", "blink", "flash", "esc",
-    "calibrat", "fail", "problem", "issue", "not working",
-    "warning", "beep", "crash", "motor", "obstacle",
-]
+# Model path — from env or relative to project root
+MODEL_PATH = Path(os.getenv("BERT_MODEL_PATH", str(Path(__file__).parent.parent.parent.parent / "models" / "bert_intent_classifier" / "model")))
 
-PRICING_KEYWORDS = [
-    "price", "cost", "buy", "purchase", "cheap", "expensive",
-    "vendor", "store", "amazon", "best buy", "b&h", "dji store",
-    "combo", "deal", "discount", "sale", "shipping", "in stock",
-    "care refresh", "how much",
-]
+# Lazy-loaded model
+_model = None
+_tokenizer = None
+_labels = {0: "rag", 1: "diagnostic", 2: "pricing"}
 
-RAG_KEYWORDS = [
-    "spec", "weight", "range", "speed", "battery", "camera",
-    "sensor", "resolution", "how to", "manual", "feature",
-    "max", "minimum", "distance", "altitude", "transmission",
-    "gimbal", "fps", "video", "photo", "storage", "sd card",
-    "controller", "remote", "pair", "connect", "update",
-]
+
+def _load_model():
+    """Load the fine-tuned BERT model (once)."""
+    global _model, _tokenizer
+
+    if _model is not None:
+        return True
+
+    if not MODEL_PATH.exists():
+        logger.warning(f"BERT model not found at {MODEL_PATH} — using fallback")
+        return False
+
+    try:
+        from transformers import DistilBertForSequenceClassification, DistilBertTokenizer
+        import torch
+
+        logger.info(f"Loading BERT classifier from {MODEL_PATH}...")
+        _tokenizer = DistilBertTokenizer.from_pretrained(str(MODEL_PATH))
+        _model = DistilBertForSequenceClassification.from_pretrained(str(MODEL_PATH))
+        _model.eval()
+        logger.info("BERT classifier loaded ✓")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to load BERT model: {e}")
+        return False
 
 
 class IntentClassifier:
-    """Keyword-based intent classifier (BERT placeholder)."""
+    """Fine-tuned BERT intent classifier with keyword fallback."""
+
+    def __init__(self):
+        self.bert_available = _load_model()
 
     def classify(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Classify query intent using keywords + conversation context.
+        Classify query intent.
+
+        Uses BERT if available (fast, ~50ms).
+        Falls back to keyword matching otherwise.
 
         Args:
-            query: Current user query.
-            conversation_history: Last N messages for context.
+            query: User's question.
+            conversation_history: Recent messages for context.
 
         Returns:
-            {"intent": str, "confidence": float}
+            {"intent": str, "confidence": float, "method": "bert" | "keyword"}
         """
-        # Build full text from query + recent history
-        history_text = ""
-        if conversation_history:
-            history_text = " ".join(
-                m.get("content", "") for m in conversation_history[-4:]
-            )
+        if self.bert_available:
+            return self._classify_bert(query)
+        else:
+            return self._classify_keywords(query, conversation_history)
 
-        full_text = f"{history_text} {query}".lower()
+    def _classify_bert(self, query: str) -> Dict[str, Any]:
+        """Classify using fine-tuned BERT."""
+        import torch
 
-        # Score each intent
-        diag_score = sum(1 for kw in DIAGNOSTIC_KEYWORDS if kw in full_text)
-        price_score = sum(1 for kw in PRICING_KEYWORDS if kw in full_text)
-        rag_score = sum(1 for kw in RAG_KEYWORDS if kw in full_text)
+        inputs = _tokenizer(
+            query,
+            padding="max_length",
+            truncation=True,
+            max_length=128,
+            return_tensors="pt",
+        )
 
-        # Pick highest scoring intent
-        scores = {
-            "diagnostic": diag_score,
-            "pricing": price_score,
-            "rag": rag_score,
-        }
+        with torch.no_grad():
+            outputs = _model(**inputs)
+            logits = outputs.logits
+            probs = torch.softmax(logits, dim=-1)
+            confidence, predicted = torch.max(probs, dim=-1)
 
-        best_intent = max(scores, key=scores.get)
-        best_score = scores[best_intent]
+        intent = _labels[predicted.item()]
+        conf = round(confidence.item(), 3)
 
-        # If no keywords matched, default to RAG
-        if best_score == 0:
-            return {"intent": "rag", "confidence": 0.50}
+        logger.info(f"BERT: {intent} (conf={conf})")
+        return {"intent": intent, "confidence": conf, "method": "bert"}
 
-        # Normalize confidence (rough heuristic)
-        total = sum(scores.values())
-        confidence = round(best_score / total, 2) if total > 0 else 0.50
+    def _classify_keywords(self, query: str, history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Fallback keyword-based classification."""
+        text = query.lower()
+        if history:
+            text += " " + " ".join(m.get("content", "").lower() for m in history[-2:])
 
-        # Clamp confidence
-        confidence = min(max(confidence, 0.50), 0.95)
+        diag_kw = ["error", "code", "e00", "led", "blink", "fail", "calibrat", "problem", "not working"]
+        price_kw = ["price", "cost", "buy", "purchase", "cheap", "store", "amazon", "combo", "deal", "how much"]
+        rag_kw = ["spec", "weight", "range", "speed", "battery", "camera", "how to", "manual", "feature", "max"]
 
-        logger.info(f"Intent: {best_intent} (conf={confidence}, scores={scores})")
-        return {"intent": best_intent, "confidence": confidence}
+        d = sum(1 for kw in diag_kw if kw in text)
+        p = sum(1 for kw in price_kw if kw in text)
+        r = sum(1 for kw in rag_kw if kw in text)
+
+        if d > p and d > r:
+            return {"intent": "diagnostic", "confidence": 0.70, "method": "keyword"}
+        elif p > d and p > r:
+            return {"intent": "pricing", "confidence": 0.70, "method": "keyword"}
+        else:
+            return {"intent": "rag", "confidence": 0.60, "method": "keyword"}

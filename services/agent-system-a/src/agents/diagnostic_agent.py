@@ -1,33 +1,58 @@
 """
-Diagnostic Agent — Looks up error codes and troubleshooting info.
+Diagnostic Agent — LLM-powered error resolution agent.
 
-Calls MCP server for:
-1. lookup_dji_error_code_db — exact error code match
-2. query_dji_manual_vector_db — related manual context
+Uses gpt-4o-mini to:
+1. Analyze the query and extract error codes/symptoms
+2. Decide whether to look up codes, search manuals, or both
+3. Execute the appropriate MCP tool calls
 """
 
 import os
-import re
+import json
 import logging
 from typing import Dict, Any, List
 
 import httpx
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8002")
 
+DIAGNOSTIC_PROMPT = """You are a diagnostic agent for DJI drone troubleshooting.
+Analyze the user's problem and decide what actions to take.
+
+Available tools:
+1. "lookup_error_code": Look up a specific error code (e.g., E001, E003)
+2. "search_manual": Search the manual for troubleshooting steps
+
+Given the query, respond with ONLY a JSON object:
+{
+  "actions": [
+    {"tool": "lookup_error_code", "error_code": "E001"},
+    {"tool": "search_manual", "query": "compass calibration troubleshooting"}
+  ],
+  "reasoning": "why these actions"
+}
+
+RULES:
+- If a specific error code is mentioned (E001, E003, etc.), ALWAYS look it up
+- Also search the manual for related troubleshooting context
+- If no specific code is mentioned, just search the manual for the symptoms described
+- Extract error codes from various formats: E001, error 001, code E001, etc."""
+
 
 class DiagnosticAgent:
-    """Resolves DJI error codes and fetches troubleshooting context."""
+    """LLM-powered diagnostic and troubleshooting agent."""
 
     def __init__(self, mcp_url: str = None):
         self.mcp_url = mcp_url or MCP_SERVER_URL
         self.timeout = 20
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def execute(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Look up error codes and fetch related diagnostic context.
+        LLM analyzes the diagnostic query and executes appropriate tool calls.
 
         Args:
             query: User's diagnostic question.
@@ -36,41 +61,63 @@ class DiagnosticAgent:
         Returns:
             {"error_codes": list, "rag_chunks": list}
         """
-        # Extract error codes from query + history
-        full_text = query
-        if conversation_history:
-            full_text += " " + " ".join(m.get("content", "") for m in conversation_history[-2:])
+        # Step 1: LLM plans diagnostic actions
+        actions = self._plan_actions(query, conversation_history)
 
-        codes = self._extract_error_codes(full_text)
+        # Step 2: Execute actions
         error_results = []
         rag_chunks = []
 
-        # Look up each error code
-        for code in codes:
-            result = self._lookup_code(code)
-            if result:
-                error_results.append(result)
+        for action in actions:
+            if action.get("tool") == "lookup_error_code":
+                code = action.get("error_code", "")
+                if code:
+                    result = self._lookup_code(code)
+                    if result:
+                        error_results.append(result)
 
-        # Also fetch related manual content via RAG
-        rag_chunks = self._search_manual(query)
+            elif action.get("tool") == "search_manual":
+                search_query = action.get("query", query)
+                chunks = self._search_manual(search_query)
+                rag_chunks.extend(chunks)
 
-        logger.info(f"Diagnostic: {len(error_results)} codes, {len(rag_chunks)} chunks")
+        logger.info(f"Diagnostic agent: {len(error_results)} codes, {len(rag_chunks)} manual chunks")
         return {"error_codes": error_results, "rag_chunks": rag_chunks}
 
-    def _extract_error_codes(self, text: str) -> List[str]:
-        """Extract error code patterns from text."""
-        patterns = [
-            r'\bE\d{3,4}\b',          # E001, E0012
-            r'\b[A-Z]+_[A-Z]+\b',     # COMPASS_ERR
-            r'\berror\s*\d+\b',        # error 001
-        ]
-        codes = []
-        for pattern in patterns:
-            codes.extend(re.findall(pattern, text, re.IGNORECASE))
-        return list(set(codes))
+    def _plan_actions(self, query: str, history: List[Dict[str, str]] = None) -> List[Dict]:
+        """Use LLM to decide diagnostic actions."""
+        history_text = ""
+        if history:
+            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in history[-3:])
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": DIAGNOSTIC_PROMPT},
+                    {"role": "user", "content": f"Context:\n{history_text}\n\nProblem: {query}"},
+                ],
+                temperature=0.0,
+                max_tokens=200,
+            )
+
+            text = response.choices[0].message.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(text)
+
+            actions = result.get("actions", [])
+            reasoning = result.get("reasoning", "")
+            logger.info(f"Diagnostic planner: {len(actions)} actions — {reasoning}")
+
+            return actions if actions else [{"tool": "search_manual", "query": query}]
+
+        except Exception as e:
+            logger.warning(f"Diagnostic planner error: {e} — searching manual directly")
+            return [{"tool": "search_manual", "query": query}]
 
     def _lookup_code(self, error_code: str) -> Dict[str, Any]:
-        """Call MCP server to look up a single error code."""
+        """Call MCP server to look up an error code."""
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 resp = client.post(
@@ -88,11 +135,11 @@ class DiagnosticAgent:
             return None
 
         except Exception as e:
-            logger.warning(f"Error code lookup failed for {error_code}: {e}")
-            return {"code": error_code, "found": False, "error": str(e)}
+            logger.warning(f"Error code lookup failed: {e}")
+            return None
 
     def _search_manual(self, query: str) -> List[Dict[str, Any]]:
-        """Fetch related manual content for diagnostic context."""
+        """Search manual for troubleshooting context."""
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 resp = client.post(
@@ -110,5 +157,5 @@ class DiagnosticAgent:
             return []
 
         except Exception as e:
-            logger.warning(f"Diagnostic RAG search failed: {e}")
+            logger.warning(f"Diagnostic manual search failed: {e}")
             return []

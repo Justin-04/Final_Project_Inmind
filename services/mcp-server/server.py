@@ -156,7 +156,7 @@ async def call_tool(request: dict):
     """
     from tools.qdrant_rag_tool import query_dji_manual_vector_db as _search
     from tools.error_code_tool import lookup_dji_error_code_db as _lookup
-    from tools.documents_tool import list_documents as _list_docs, delete_document as _delete_doc
+    from tools.documents_tool import list_documents as _list_docs, delete_document as _delete_doc, upload_and_ingest as _ingest
 
     tool_name = request.get("tool_name")
     arguments = request.get("arguments", {})
@@ -171,16 +171,12 @@ async def call_tool(request: dict):
             output = _lookup(**arguments)
 
         elif tool_name == "ingest_and_index_pdf":
-            from tools.extraction import extract_pdf_pages
-            from tools.ingestion import ingest_pages
-
             if "file_bytes_b64" in arguments:
                 pdf_bytes = base64.b64decode(arguments["file_bytes_b64"])
                 filename = arguments.get("filename", "upload.pdf")
                 drone_model = arguments.get("drone_model", "unknown")
-
-                pages = extract_pdf_pages(pdf_bytes, filename, drone_model)
-                output = ingest_pages(pages, drone_model, filename)
+                caption = arguments.get("caption_images", False)
+                output = _ingest(pdf_bytes, filename, drone_model, caption)
             else:
                 output = {"error": "file_bytes_b64 is required"}
 

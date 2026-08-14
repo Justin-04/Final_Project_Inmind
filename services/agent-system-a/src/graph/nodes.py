@@ -7,7 +7,8 @@ src/pipeline/ or src/agents/. Keeps the graph clean and logic testable.
 
 from typing import Dict, Any
 from src.state.agent_state import AgentState
-from src.pipeline import InputGuard, IntentClassifier, Supervisor, OutputGuard
+from src.pipeline import InputGuard, Supervisor, OutputGuard
+from src.pipeline.classifier import IntentClassifier
 from src.agents import RAGAgent, DiagnosticAgent, PricingAgent, Summarizer
 
 # Instantiate once (singletons)
@@ -35,32 +36,51 @@ def input_guard_node(state: AgentState) -> Dict[str, Any]:
 
 
 def classifier_node(state: AgentState) -> Dict[str, Any]:
-    """Classify query intent."""
-    print("\n🏷️  [Classifier] Detecting intent...")
+    """BERT intent classification (fast ~50ms). Used as pre-filter for supervisor."""
+    print("\n🏷️  [Classifier] BERT classifying intent...")
     result = _classifier.classify(state["query"], state.get("conversation_history", []))
-    print(f"   Intent: {result['intent']} (confidence: {result['confidence']:.2f})")
+    print(f"   Intent: {result['intent']} (conf={result['confidence']}, method={result['method']})")
     return {"intent": result["intent"], "confidence": result["confidence"]}
 
 
 def supervisor_node(state: AgentState) -> Dict[str, Any]:
-    """Route to specialist agent."""
-    print("\n🎯 [Supervisor] Routing...")
-    result = _supervisor.route(state["intent"], state.get("iteration_count", 0))
+    """
+    LLM-powered routing decision.
+    If BERT is confident (>0.85), trust it and skip LLM call.
+    Otherwise, use LLM supervisor for complex routing.
+    """
+    intent = state.get("intent", "")
+    confidence = state.get("confidence", 0.0)
+
+    # Fast path: BERT is confident → route directly (skip LLM call)
+    if confidence >= 0.85:
+        route_map = {"rag": "rag_agent", "diagnostic": "diagnostic_agent", "pricing": "pricing_agent"}
+        route = route_map.get(intent, "rag_agent")
+        print(f"\n🎯 [Supervisor] BERT confident ({confidence:.2f}) → fast routing to {route}")
+        return {"route": route, "iteration_count": state.get("iteration_count", 0) + 1}
+
+    # Slow path: BERT unsure → LLM decides
+    print("\n🎯 [Supervisor] BERT unsure → LLM deciding route...")
+    result = _supervisor.route(
+        query=state["query"],
+        conversation_history=state.get("conversation_history", []),
+        iteration_count=state.get("iteration_count", 0),
+    )
     print(f"   Route: {result['route']}")
     return result
 
 
 def rag_agent_node(state: AgentState) -> Dict[str, Any]:
-    """Call MCP server for manual vector search."""
-    print("\n📚 [RAG Agent] Searching manuals...")
+    """LLM-powered RAG agent — plans search strategy and executes."""
+    print("\n📚 [RAG Agent] LLM planning search strategy...")
     result = _rag_agent.execute(state["query"], state.get("conversation_history", []))
     print(f"   Retrieved {len(result.get('chunks', []))} chunks")
     return {"rag_result": result}
 
 
 def diagnostic_agent_node(state: AgentState) -> Dict[str, Any]:
-    """Call MCP server for error code lookups."""
-    print("\n🔧 [Diagnostic Agent] Looking up errors...")
+    """LLM-powered diagnostic agent — analyzes problem and executes lookups."""
+    print("\n🔧 [Diagnostic Agent] LLM analyzing problem...")
     result = _diagnostic_agent.execute(state["query"], state.get("conversation_history", []))
     print(f"   Found {len(result.get('error_codes', []))} codes, {len(result.get('rag_chunks', []))} chunks")
     return {"diagnostic_result": result}

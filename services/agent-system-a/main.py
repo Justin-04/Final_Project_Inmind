@@ -14,7 +14,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -314,10 +314,18 @@ async def admin_ingest(request: dict, user: dict = Depends(require_admin)):
             data = resp.json()
 
         if data.get("status") == "success":
-            return {"status": "success", "result": data["output"]}
+            output = data["output"]
+            return {
+                "status": output.get("status", "success"),
+                "filename": output.get("filename", source_name),
+                "pages": output.get("pages", 0),
+                "chunks": output.get("chunks", 0),
+            }
         else:
-            return {"status": "error", "message": data.get("error", "Ingestion failed")}
+            raise HTTPException(status_code=500, detail=data.get("error", "Ingestion failed"))
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -336,7 +344,17 @@ async def admin_list_documents(user: dict = Depends(require_admin)):
             data = resp.json()
 
         if data.get("status") == "success":
-            return {"documents": data["output"]}
+            # Transform to match frontend's KnowledgeDocument interface:
+            # {source: str, drone_model: str, chunk_count: int}
+            raw_docs = data["output"]
+            documents = []
+            for doc in raw_docs:
+                documents.append({
+                    "source": doc.get("filename", doc.get("source", "unknown")),
+                    "drone_model": doc.get("drone_model", "unknown"),
+                    "chunk_count": doc.get("chunks", doc.get("chunk_count", 0)),
+                })
+            return {"documents": documents}
         else:
             return {"documents": [], "error": data.get("error")}
 
@@ -361,9 +379,15 @@ async def admin_delete_document(source_name: str, user: dict = Depends(require_a
             data = resp.json()
 
         if data.get("status") == "success":
-            return data["output"]
+            output = data["output"]
+            is_deleted = output.get("status") == "deleted"
+            return {
+                "deleted": is_deleted,
+                "source": source_name,
+                "message": f"Removed {output.get('chunks_removed', 0)} chunks" if is_deleted else output.get("message", "Not found"),
+            }
         else:
-            return {"deleted": False, "error": data.get("error")}
+            return {"deleted": False, "source": source_name, "message": data.get("error", "Delete failed")}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -402,6 +426,97 @@ async def delete_conversation(conversation_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"status": "deleted"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice Input (Whisper STT)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/voice")
+async def voice_chat(audio: UploadFile = File(...), user_id: str = "anonymous", conversation_id: str = None):
+    """
+    Voice input endpoint. Accepts audio file, transcribes with OpenAI Whisper,
+    then runs the transcription through the chat pipeline.
+    """
+    from openai import OpenAI
+
+    try:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        audio_bytes = await audio.read()
+        
+        import io
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = audio.filename or "audio.webm"
+
+        print(f"\n🎤 [Voice] Transcribing {len(audio_bytes)} bytes...")
+
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="en",
+        )
+
+        transcribed_text = transcript.text.strip()
+        print(f"🎤 [Voice] Transcribed: '{transcribed_text}'")
+
+        if not transcribed_text:
+            raise HTTPException(status_code=400, detail="Could not transcribe audio")
+
+        # Run through chat pipeline
+        chat_request = ChatRequest(
+            query=transcribed_text,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        result = await chat(chat_request)
+
+        return {
+            "transcription": transcribed_text,
+            "conversation_id": result.conversation_id,
+            "response": result.response,
+            "intent": result.intent,
+            "metadata": result.metadata,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Voice error: {e}")
+        raise HTTPException(status_code=500, detail="Voice processing failed")
+
+
+@app.post("/api/v1/voice/transcribe")
+async def voice_transcribe_only(audio: UploadFile = File(...)):
+    """
+    Transcribe-only endpoint. Returns the text without running chat pipeline.
+    Used for "record → show in input → user reviews → send" flow.
+    """
+    from openai import OpenAI
+
+    try:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        audio_bytes = await audio.read()
+
+        import io
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = audio.filename or "audio.webm"
+
+        print(f"\n🎤 [Transcribe] {len(audio_bytes)} bytes...")
+
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="en",
+        )
+
+        transcribed_text = transcript.text.strip()
+        print(f"🎤 [Transcribe] Result: '{transcribed_text}'")
+
+        return {"transcription": transcribed_text}
+
+    except Exception as e:
+        logger.error(f"Transcribe error: {e}")
+        raise HTTPException(status_code=500, detail="Transcription failed")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

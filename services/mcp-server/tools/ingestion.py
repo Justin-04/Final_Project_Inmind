@@ -82,12 +82,23 @@ def load_pages() -> list[dict]:
 # ─── Chunking ─────────────────────────────────────────────────────────────────
 
 def detect_drone_model(source: str) -> str:
-    if "mavic" in source.lower():
+    source_lower = source.lower()
+    if "mavic" in source_lower and "classic" in source_lower:
         return "DJI Mavic 3 Classic"
-    elif "mini" in source.lower():
+    elif "mavic" in source_lower:
+        return "DJI Mavic 3 Pro"
+    elif "mini" in source_lower:
         return "DJI Mini 4 Pro"
-    elif "air" in source.lower():
+    elif "air" in source_lower:
         return "DJI Air 3"
+    elif "neo" in source_lower:
+        return "DJI Neo"
+    elif "avata" in source_lower:
+        return "DJI Avata 2"
+    elif "phantom" in source_lower:
+        return "DJI Phantom"
+    elif "inspire" in source_lower:
+        return "DJI Inspire"
     return "Unknown"
 
 
@@ -130,7 +141,7 @@ def create_parent_chunks(pages: list[dict]) -> list[dict]:
         text = page["text"]
         source = page["source"]
         page_num = page["page"]
-        drone_model = detect_drone_model(source)
+        drone_model = page.get("drone_model_override") or detect_drone_model(source)
 
         start = 0
         chunk_index = 0

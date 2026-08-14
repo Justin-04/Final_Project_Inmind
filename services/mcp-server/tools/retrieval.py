@@ -252,6 +252,14 @@ def tokenize(text: str) -> list[str]:
 bm25_index, bm25_docs = build_bm25_index()
 
 
+def rebuild_bm25_index():
+    """Rebuild BM25 index after ingest or delete. Call this after modifying Qdrant."""
+    global bm25_index, bm25_docs
+    print("Rebuilding BM25 index...")
+    bm25_index, bm25_docs = build_bm25_index()
+    print(f"BM25 index rebuilt: {len(bm25_docs)} documents")
+
+
 # ─── Retrieval ────────────────────────────────────────────────────────────────
 
 def embed_query(query: str) -> list[float]:
@@ -369,17 +377,19 @@ def retrieve(
     6. Store result in cache
     7. Return top_k with parent_text as the context
     """
-    # Step 0: Embed query (needed for both cache check and retrieval)
-    query_embedding = embed_query(query)
+    # Step 0: Embed query — include drone filter in embedding for cache differentiation
+    cache_query = f"{drone_filter} {query}" if drone_filter else query
+    query_embedding = embed_query(cache_query)
 
-    # Step 1: Check cache (only for unfiltered queries — filters change results)
-    if use_cache and not (drone_filter or topic_filter or modality_filter):
+    # Step 1: Check cache (works for all queries — filter is baked into the embedding key)
+    if use_cache:
         cached = cache_lookup(query_embedding)
         if cached:
             return cached["chunks"]
 
-    # Step 2: Full retrieval pipeline
-    semantic_results = retrieve_semantic(query, query_embedding, top_k=RETRIEVAL_K)
+    # Step 2: Full retrieval pipeline (use original query for search, not cache_query)
+    search_embedding = embed_query(query) if drone_filter else query_embedding
+    semantic_results = retrieve_semantic(query, search_embedding, top_k=RETRIEVAL_K)
     bm25_results = retrieve_bm25(query, top_k=RETRIEVAL_K)
 
     # Merge and deduplicate by child text
@@ -420,11 +430,9 @@ def retrieve(
             "metadata": chunk["metadata"],
         })
 
-    # Step 6: Store in cache for future queries
-    if use_cache and not (drone_filter or topic_filter or modality_filter):
-        # Generate answer to cache alongside chunks
-        # (We cache chunks only — answer is generated fresh or cached separately)
-        cache_store(query, query_embedding, "", output)
+    # Step 6: Store in cache (cache key includes drone filter for differentiation)
+    if use_cache:
+        cache_store(cache_query, query_embedding, "", output)
 
     return output
 

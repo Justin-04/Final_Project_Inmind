@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, Mic, MicOff } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { api, type ChatMessage, type ChatTelemetry } from '@/services/api';
 import { toast } from 'sonner';
@@ -19,6 +19,26 @@ function parseIntent(intent?: string): ChatTelemetry['intent'] {
   return 'rag';
 }
 
+function speakText(text: string) {
+  // Strip markdown formatting for cleaner speech
+  const clean = text
+    .replace(/[#*_~`>\[\]()!]/g, '')
+    .replace(/\n+/g, '. ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  
+  if (!clean || !('speechSynthesis' in window)) return;
+  
+  // Cancel any ongoing speech
+  speechSynthesis.cancel();
+  
+  const utterance = new SpeechSynthesisUtterance(clean);
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.lang = 'en-US';
+  speechSynthesis.speak(utterance);
+}
+
 export default function ChatPage() {
   const { auth } = useAuth();
   const navigate = useNavigate();
@@ -28,6 +48,12 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasVoiceInputRef = useRef(false);
+  const MAX_RECORDING_MS = 30000; // 30 seconds max
   const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -125,6 +151,89 @@ export default function ChatPage() {
     }
   };
 
+  const handleVoiceToggle = useCallback(async () => {
+    if (recording) {
+      // Stop recording
+      if (recordingTimerRef.current) {
+        clearTimeout(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+
+    // Start recording
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+        if (audioBlob.size < 1000) {
+          toast.error('Recording too short');
+          return;
+        }
+
+        if (!auth) return;
+
+        // Transcribe only — put text in input field for user to review
+        toast.info('Transcribing...');
+        try {
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'recording.webm');
+          formData.append('user_id', auth.username);
+
+          const headers: Record<string, string> = {};
+          const authState = await import('@/services/api').then(m => m.getAuth());
+          if (authState?.access_token) {
+            headers['Authorization'] = `Bearer ${authState.access_token}`;
+          }
+
+          const res = await fetch('/api/v1/voice/transcribe', {
+            method: 'POST',
+            headers,
+            body: formData,
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            setInput(data.transcription);
+            wasVoiceInputRef.current = true;
+            toast.success('Transcribed! Press Enter to send.');
+          } else {
+            toast.error('Transcription failed');
+          }
+        } catch (err) {
+          toast.error('Transcription failed');
+        }
+      };
+
+      mediaRecorder.start();
+      setRecording(true);
+      toast.info('Recording... click again to stop (max 30s)');
+
+      // Auto-stop after 30 seconds
+      recordingTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+          setRecording(false);
+          toast.info('Max recording time reached');
+        }
+      }, MAX_RECORDING_MS);
+    } catch (err) {
+      toast.error('Microphone access denied');
+    }
+  }, [recording, auth, activeId]);
+
   if (!auth) return null;
 
   return (
@@ -175,6 +284,17 @@ export default function ChatPage() {
                 className="min-h-[40px] max-h-40 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
                 rows={1}
               />
+              <button
+                onClick={handleVoiceToggle}
+                disabled={loading}
+                className={`flex-shrink-0 flex h-9 w-9 items-center justify-center rounded-lg transition-all ${
+                  recording
+                    ? 'bg-red-500 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.5)]'
+                    : 'bg-[#1F2937] border border-cyan-500/20 hover:border-cyan-500/50 text-cyan-400'
+                } disabled:opacity-30 disabled:cursor-not-allowed`}
+              >
+                {recording ? <MicOff className="h-4 w-4 text-white" /> : <Mic className="h-4 w-4" />}
+              </button>
               <button
                 onClick={() => handleSend()}
                 disabled={!input.trim() || loading}

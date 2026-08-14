@@ -142,6 +142,44 @@ export const api = {
       method: 'DELETE',
     });
   },
+
+  async voiceChat(audioBlob: Blob, userId: string, conversationId: string | null) {
+    const auth = getAuth();
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    formData.append('user_id', userId);
+    if (conversationId) formData.append('conversation_id', conversationId);
+
+    const headers: Record<string, string> = {};
+    if (auth?.access_token) {
+      headers['Authorization'] = `Bearer ${auth.access_token}`;
+    }
+
+    const res = await fetch('/api/v1/voice', {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (res.status === 401) {
+      clearAuth();
+      onUnauthorized?.();
+      throw new Error('Unauthorized');
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'Voice request failed');
+    }
+
+    return res.json() as Promise<{
+      transcription: string;
+      conversation_id: string;
+      response: string;
+      intent: string;
+      metadata: any;
+    }>;
+  },
 };
 
 interface AuthResponse {

@@ -1,0 +1,7 @@
+# Model weights (too large for git)
+model/
+checkpoints/
+
+# Keep training data and script
+!intent_training_data.json
+!label_map.json

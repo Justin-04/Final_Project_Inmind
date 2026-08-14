@@ -1,9 +1,24 @@
 import { motion } from 'framer-motion';
-import { Hexagon, User as UserIcon } from 'lucide-react';
+import { Hexagon, User as UserIcon, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ChatMessage } from '@/services/api';
 import MarkdownRenderer from './MarkdownRenderer';
 import TelemetryBar from './TelemetryBar';
+
+function speakText(text: string) {
+  const clean = text
+    .replace(/[#*_~`>\[\]()!]/g, '')
+    .replace(/\n+/g, '. ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(clean);
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.lang = 'en-US';
+  speechSynthesis.speak(utterance);
+}
 
 export default function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
@@ -43,6 +58,17 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
             <MarkdownRenderer content={message.content} />
           )}
         </div>
+        {/* TTS speaker button for assistant messages */}
+        {!isUser && message.content && (
+          <button
+            onClick={() => speakText(message.content)}
+            className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-cyan-400 transition-colors"
+            title="Read aloud"
+          >
+            <Volume2 className="h-3 w-3" />
+            <span>Listen</span>
+          </button>
+        )}
         {message.telemetry && <TelemetryBar telemetry={message.telemetry} />}
       </div>
     </motion.div>

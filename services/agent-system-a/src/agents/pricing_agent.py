@@ -1,48 +1,131 @@
 """
-Pricing Agent — Calls agent-system-b over HTTP A2A.
+Pricing Agent — LLM-powered agent that calls agent-system-b over HTTP A2A.
 
-Sends: POST http://agent-system-b:8001/v1/pricing
-Returns structured vendor pricing data.
-
-Does NOT hardcode drone models — extracts whatever model
-the user mentions and passes it to system-b.
+Uses gpt-4o-mini to:
+1. Analyze the pricing query
+2. Extract drone model(s) from query + conversation context
+3. Decide if single or multi-model comparison is needed
+4. Call agent-system-b with the correct parameters
 """
 
 import os
-import re
+import json
 import logging
 from typing import Dict, Any, List
 
 import httpx
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
 AGENT_B_URL = os.getenv("AGENT_B_URL", "http://localhost:8001")
 
+PLANNER_PROMPT = """You are a pricing query analyzer for DJI drones.
+Given the user's query and conversation history, extract the drone model(s) to look up pricing for.
+
+RULES:
+- Extract the exact drone model name(s) mentioned
+- If the user says "it" or "that drone", resolve from conversation history
+- If multiple models are mentioned (comparison), return all of them
+- Return the model name as the user would say it (e.g., "mini_4_pro", "air_3", "avata_2", "neo")
+- If no specific model is found, use the query itself as the search term
+
+Respond with ONLY a JSON object:
+{
+  "models": ["model_1", "model_2"],
+  "query": "the user's pricing question",
+  "reasoning": "why these models"
+}
+
+Examples:
+- "How much is the Mini 4 Pro?" → {"models": ["mini_4_pro"], "query": "DJI Mini 4 Pro price", "reasoning": "single model pricing"}
+- "Compare prices of Air 3 and Mavic 3" → {"models": ["air_3", "mavic_3_pro"], "query": "price comparison", "reasoning": "multi-model comparison"}
+- "What about its price?" (history mentions Neo) → {"models": ["neo"], "query": "DJI Neo price", "reasoning": "resolved from history"}
+- "How much is the DJI Avata 2?" → {"models": ["avata_2"], "query": "DJI Avata 2 price", "reasoning": "single model pricing"}"""
+
 
 class PricingAgent:
-    """Calls agent-system-b for vendor pricing via HTTP A2A."""
+    """LLM-powered pricing agent that calls agent-system-b via HTTP A2A."""
 
     def __init__(self, agent_b_url: str = None):
         self.agent_b_url = agent_b_url or AGENT_B_URL
-        self.timeout = 60  # Agent B takes time (LLM + web search)
+        self.timeout = 60
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def execute(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Call agent-system-b for pricing.
-
-        Extracts the drone model from the query/history dynamically
-        (no hardcoded list — supports any DJI model).
+        LLM analyzes the query, extracts models, calls system-b.
 
         Args:
             query: User's pricing question.
-            conversation_history: Last N messages for model extraction.
+            conversation_history: Last N messages for context.
 
         Returns:
-            dict: Pricing response from agent-system-b or error.
+            dict: Pricing response(s) from agent-system-b.
         """
-        drone_model = self._extract_drone_model(query, conversation_history)
+        # Step 1: LLM extracts model(s) from query
+        plan = self._plan_pricing(query, conversation_history)
+        models = plan.get("models", [])
 
+        if not models:
+            models = [query[:50]]  # Fallback: pass raw query
+
+        # Step 2: Call system-b for each model
+        if len(models) >= 2:
+            # Multi-model comparison
+            all_results = []
+            for model in models:
+                result = self._call_system_b(model, query)
+                all_results.append(result)
+
+            merged_vendors = []
+            for r in all_results:
+                for v in r.get("vendors", []):
+                    v["drone_model"] = r.get("display_name", r.get("drone_model", ""))
+                    merged_vendors.append(v)
+
+            logger.info(f"Pricing agent: multi-model {models} → {len(merged_vendors)} vendors")
+            return {
+                "vendors": merged_vendors,
+                "multi_model": True,
+                "models_compared": [r.get("display_name", "") for r in all_results],
+                "summary_notes": f"Pricing comparison for: {', '.join(models)}",
+            }
+        else:
+            # Single model
+            return self._call_system_b(models[0], query)
+
+    def _plan_pricing(self, query: str, history: List[Dict[str, str]] = None) -> Dict:
+        """Use LLM to extract drone model(s) from the query."""
+        history_text = ""
+        if history:
+            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in history[-3:])
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": PLANNER_PROMPT},
+                    {"role": "user", "content": f"Conversation:\n{history_text}\n\nQuery: {query}"},
+                ],
+                temperature=0.0,
+                max_tokens=150,
+            )
+
+            text = response.choices[0].message.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(text)
+
+            logger.info(f"Pricing planner: models={result.get('models')} — {result.get('reasoning')}")
+            return result
+
+        except Exception as e:
+            logger.warning(f"Pricing planner error: {e}")
+            return {"models": [], "query": query}
+
+    def _call_system_b(self, drone_model: str, query: str) -> Dict[str, Any]:
+        """Make a single HTTP call to agent-system-b."""
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 resp = client.post(
@@ -56,63 +139,12 @@ class PricingAgent:
                 resp.raise_for_status()
                 data = resp.json()
 
-            logger.info(f"Pricing agent got {len(data.get('vendors', []))} vendors for '{drone_model}'")
+            logger.info(f"Pricing: got {len(data.get('vendors', []))} vendors for '{drone_model}'")
             return data
 
         except httpx.TimeoutException:
-            logger.error("Pricing agent timeout (agent-system-b)")
-            return {"error": "Pricing service timeout", "vendors": []}
+            logger.error(f"Pricing timeout for '{drone_model}'")
+            return {"error": "Pricing service timeout", "vendors": [], "drone_model": drone_model}
         except Exception as e:
-            logger.error(f"Pricing agent error: {e}")
-            return {"error": str(e), "vendors": []}
-
-    def _extract_drone_model(self, query: str, history: List[Dict[str, str]] = None) -> str:
-        """
-        Extract drone model from query or conversation history.
-
-        Dynamically finds DJI model names — not limited to a hardcoded list.
-        Looks for patterns like "DJI <model name>" or known model keywords.
-        """
-        # Combine query + recent history
-        text = query
-        if history:
-            text += " " + " ".join(m.get("content", "") for m in history[-4:])
-        text_lower = text.lower()
-
-        # Pattern: "dji <word(s)> <number/pro/etc>"
-        # Matches: DJI Mini 4 Pro, DJI Air 3, DJI Mavic 3 Pro, DJI Neo, DJI Avata 2, etc.
-        dji_pattern = re.search(
-            r'dji\s+([\w\s]+?)(?:\s+(?:drone|price|cost|buy|how|what|is|the|for|in|at)|\?|$)',
-            text_lower,
-        )
-        if dji_pattern:
-            model = dji_pattern.group(1).strip()
-            # Clean trailing common words
-            model = re.sub(r'\s+(price|cost|buy|how|what|is|much|the)$', '', model)
-            if model:
-                return model.replace(" ", "_")
-
-        # Fallback: look for known patterns without "DJI" prefix
-        known_patterns = [
-            r'(mini\s*4\s*pro)',
-            r'(mini\s*3\s*pro)',
-            r'(mini\s*3)',
-            r'(mini\s*2)',
-            r'(air\s*3)',
-            r'(air\s*2s?)',
-            r'(mavic\s*3\s*pro)',
-            r'(mavic\s*3\s*classic)',
-            r'(mavic\s*3)',
-            r'(avata\s*2?)',
-            r'(neo)',
-            r'(phantom\s*\d)',
-            r'(inspire\s*\d)',
-        ]
-
-        for pattern in known_patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                return match.group(1).strip().replace(" ", "_")
-
-        # Last resort: just pass the query as-is (system-b's LLM will figure it out)
-        return query[:50].replace(" ", "_")
+            logger.error(f"Pricing error for '{drone_model}': {e}")
+            return {"error": str(e), "vendors": [], "drone_model": drone_model}

@@ -31,17 +31,28 @@ class ConversationStore:
             if doc:
                 return conversation_id
 
-        # Create new
+        # Create new with random 3-char suffix as default title
+        import random, string
+        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=3))
         conversation_id = str(uuid.uuid4())
         await self.conversations.insert_one({
             "conversation_id": conversation_id,
             "user_id": user_id,
+            "title": f"Conversation {suffix}",
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
             "messages": [],
         })
         logger.info(f"Created conversation: {conversation_id}")
         return conversation_id
+
+    async def rename_conversation(self, conversation_id: str, title: str) -> bool:
+        """Rename a conversation."""
+        result = await self.conversations.update_one(
+            {"conversation_id": conversation_id},
+            {"$set": {"title": title, "updated_at": datetime.now(timezone.utc)}},
+        )
+        return result.modified_count > 0
 
     async def add_message(self, conversation_id: str, role: str, content: str):
         """Append a message to conversation."""
@@ -79,7 +90,7 @@ class ConversationStore:
         """List user's conversations."""
         cursor = self.conversations.find(
             {"user_id": user_id},
-            {"_id": 0, "conversation_id": 1, "created_at": 1, "updated_at": 1},
+            {"_id": 0, "conversation_id": 1, "title": 1, "created_at": 1, "updated_at": 1},
         ).sort("updated_at", -1).limit(limit)
         return await cursor.to_list(length=limit)
 

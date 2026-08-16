@@ -64,6 +64,19 @@ export default function ChatPage() {
     }
   }, [auth, navigate]);
 
+  // Load conversation history from MongoDB on mount
+  useEffect(() => {
+    if (!auth) return;
+    api.getConversations(auth.username).then((res) => {
+      const convs: ConversationMeta[] = (res.conversations || []).map((c: any) => ({
+        id: c.conversation_id,
+        title: c.title || c.conversation_id.slice(0, 8) + '...',
+        createdAt: new Date(c.created_at).getTime(),
+      }));
+      setConversations(convs);
+    }).catch(() => {});
+  }, [auth]);
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -82,10 +95,24 @@ export default function ChatPage() {
     setMessages([]);
   }, []);
 
-  const handleSelectConversation = useCallback((id: string) => {
+  const handleSelectConversation = useCallback(async (id: string) => {
     setActiveId(id);
     setMessages([]);
-    // In a real app, fetch history by conversation_id; here we just reset
+    // Fetch conversation messages from MongoDB
+    try {
+      const res = await api.getConversation(id);
+      if (res.messages) {
+        const msgs: ChatMessage[] = res.messages.map((m: any, i: number) => ({
+          id: `${id}-${i}`,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          createdAt: new Date(m.timestamp).getTime(),
+        }));
+        setMessages(msgs);
+      }
+    } catch {
+      // If fetch fails, just show empty
+    }
   }, []);
 
   const handleSend = useCallback(async (override?: string) => {

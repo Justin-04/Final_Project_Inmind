@@ -111,6 +111,48 @@ class ChatResponse(BaseModel):
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _get_tools_executed(result: dict) -> list:
+    """Extract which tools were executed based on the pipeline result."""
+    tools = []
+    route = result.get("route", "")
+
+    if route == "rag_agent":
+        rag_result = result.get("rag_result") or {}
+        tools.append({
+            "tool_name": "query_dji_manual_vector_db",
+            "target": "mcp-server",
+            "status": "success" if rag_result.get("chunks") else "no_results",
+            "chunks_returned": len(rag_result.get("chunks", [])),
+        })
+    elif route == "diagnostic_agent":
+        diag_result = result.get("diagnostic_result") or {}
+        if diag_result.get("error_codes"):
+            tools.append({
+                "tool_name": "lookup_dji_error_code_db",
+                "target": "mcp-server",
+                "status": "success",
+                "codes_found": len(diag_result.get("error_codes", [])),
+            })
+        if diag_result.get("rag_chunks"):
+            tools.append({
+                "tool_name": "query_dji_manual_vector_db",
+                "target": "mcp-server",
+                "status": "success",
+                "chunks_returned": len(diag_result.get("rag_chunks", [])),
+            })
+    elif route == "pricing_agent":
+        pricing_result = result.get("pricing_result") or {}
+        tools.append({
+            "tool_name": "vendor_pricing_search",
+            "target": "agent-system-b",
+            "status": "success" if pricing_result.get("vendors") else "no_results",
+            "vendors_returned": len(pricing_result.get("vendors", [])),
+            "multi_model": pricing_result.get("multi_model", False),
+        })
+
+    return tools
+
+
 @app.get("/health")
 async def health_check():
     return {
@@ -123,7 +165,7 @@ async def health_check():
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
     """
     Main chat endpoint. Runs the full LangGraph pipeline.
 
@@ -198,6 +240,16 @@ async def chat(request: ChatRequest):
                 "confidence": result.get("confidence", 0.0),
                 "route": result.get("route", ""),
                 "iteration_count": result.get("iteration_count", 0),
+                "guardrail": {
+                    "passed": result.get("input_safe", True),
+                    "flagged_reason": result.get("guardrail_message"),
+                },
+                "bert_classification": {
+                    "intent": result.get("intent", "unknown"),
+                    "confidence": result.get("confidence", 0.0),
+                },
+                "route_taken": ["input_guard", "bert_classifier", "supervisor", result.get("route", ""), "summarizer"],
+                "tools_executed": _get_tools_executed(result),
             },
         )
 
@@ -207,7 +259,7 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/api/v1/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, user: dict = Depends(get_current_user)):
     """
     SSE streaming chat endpoint.
     Streams the final response token-by-token (simulated from full response).
@@ -428,12 +480,26 @@ async def delete_conversation(conversation_id: str):
     return {"status": "deleted"}
 
 
+@app.put("/api/v1/conversations/{conversation_id}/rename")
+async def rename_conversation(conversation_id: str, request: dict):
+    """Rename a conversation."""
+    if not conversation_store:
+        raise HTTPException(status_code=503, detail="MongoDB not configured")
+    title = request.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    updated = await conversation_store.rename_conversation(conversation_id, title)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "renamed", "title": title}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Input (Whisper STT)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.post("/api/v1/voice")
-async def voice_chat(audio: UploadFile = File(...), user_id: str = "anonymous", conversation_id: str = None):
+async def voice_chat(audio: UploadFile = File(...), user_id: str = "anonymous", conversation_id: str = None, user: dict = Depends(get_current_user)):
     """
     Voice input endpoint. Accepts audio file, transcribes with OpenAI Whisper,
     then runs the transcription through the chat pipeline.
@@ -486,7 +552,7 @@ async def voice_chat(audio: UploadFile = File(...), user_id: str = "anonymous", 
 
 
 @app.post("/api/v1/voice/transcribe")
-async def voice_transcribe_only(audio: UploadFile = File(...)):
+async def voice_transcribe_only(audio: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """
     Transcribe-only endpoint. Returns the text without running chat pipeline.
     Used for "record → show in input → user reviews → send" flow.

@@ -11,8 +11,17 @@ from src.pipeline import InputGuard, Supervisor, OutputGuard
 from src.pipeline.classifier import IntentClassifier
 from src.agents import RAGAgent, DiagnosticAgent, PricingAgent, Summarizer
 
+
+from src.pipeline.input_guard_v2 import InputGuardV2
+
+
+
+
 # Instantiate once (singletons)
-_input_guard = InputGuard()
+# _input_guard = InputGuard()
+
+_input_guard = InputGuardV2()
+
 _classifier = IntentClassifier()
 _supervisor = Supervisor(max_iterations=5)
 _output_guard = OutputGuard()

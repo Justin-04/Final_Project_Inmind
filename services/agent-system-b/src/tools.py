@@ -5,13 +5,20 @@ These are the actual tool implementations that the LLM agent can invoke.
 Each tool performs a specific action and returns structured data.
 """
 
+import os
 import re
 import logging
 from typing import List, Dict, Any
 
-from duckduckgo_search import DDGS
+import httpx
+
+# from duckduckgo_search import DDGS  # Commented out — replaced by Google Custom Search
 
 logger = logging.getLogger(__name__)
+
+# Google Custom Search API config
+GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY", "")
+GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX", "")  # Custom Search Engine ID
 
 # Retailers config
 RETAILERS = [
@@ -24,7 +31,8 @@ RETAILERS = [
 
 def search_duckduckgo(query: str) -> List[Dict[str, str]]:
     """
-    Execute a DuckDuckGo web search and return results with extracted prices.
+    Execute a web search using Google Custom Search API.
+    (Function name kept as search_duckduckgo for backward compatibility with LLM tool definitions)
 
     Args:
         query: Search query string (e.g., "DJI Air 3 price Amazon")
@@ -32,16 +40,76 @@ def search_duckduckgo(query: str) -> List[Dict[str, str]]:
     Returns:
         list: Up to 8 search results, each with 'title', 'url', 'snippet', 'prices_found'.
     """
-    logger.info(f"[Tool] search_duckduckgo: '{query}'")
+    logger.info(f"[Tool] search (Google CSE): '{query}'")
 
+    # Use SerpAPI (Google Search) if key available
+    if os.getenv("SERPAPI_KEY"):
+        return _google_search(query)
+
+    # Fallback to DuckDuckGo if no SerpAPI key
+    return _duckduckgo_search(query)
+
+
+def _google_search(query: str) -> List[Dict[str, str]]:
+    """Execute search via SerpAPI (Google Search wrapper)."""
     try:
+        from serpapi import GoogleSearch
+
+        params = {
+            "engine": "google",
+            "q": query,
+            "api_key": os.getenv("SERPAPI_KEY", ""),
+            "num": 8,
+        }
+
+        search = GoogleSearch(params)
+        data = search.get_dict()
+
+        if "error" in data:
+            logger.error(f"[Tool] SerpAPI error: {data['error']}")
+            return []
+
+        results = []
+        for item in data.get("organic_results", []):
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+            combined_text = f"{title} {snippet}"
+
+            # Extract dollar prices
+            prices = re.findall(r'\$[\d,]+\.?\d*', combined_text)
+            parsed_prices = []
+            for p in prices:
+                try:
+                    val = float(p.replace("$", "").replace(",", ""))
+                    if 10 < val < 15000:
+                        parsed_prices.append(val)
+                except ValueError:
+                    pass
+
+            results.append({
+                "title": title,
+                "url": item.get("link", ""),
+                "snippet": snippet,
+                "prices_found": parsed_prices,
+            })
+
+        logger.info(f"[Tool] SerpAPI: returned {len(results)} results")
+        return results
+
+    except Exception as e:
+        logger.error(f"[Tool] SerpAPI error: {e}")
+        return [{"title": "Search failed", "url": "", "snippet": str(e), "prices_found": []}]
+
+
+def _duckduckgo_search(query: str) -> List[Dict[str, str]]:
+    """Fallback: DuckDuckGo search (unreliable, rate-limited)."""
+    try:
+        from duckduckgo_search import DDGS
         ddgs = DDGS()
         raw_results = ddgs.text(query, max_results=8)
 
-        # If site: operator returned nothing, retry without it
         if not raw_results and "site:" in query:
             clean_query = re.sub(r'site:\S+', '', query).strip()
-            logger.info(f"[Tool] Retrying without site filter: '{clean_query}'")
             raw_results = ddgs.text(clean_query, max_results=8)
 
         results = []
@@ -50,7 +118,6 @@ def search_duckduckgo(query: str) -> List[Dict[str, str]]:
             title = r.get("title", "")
             combined_text = f"{title} {snippet}"
 
-            # Extract any dollar prices from the snippet
             prices = re.findall(r'\$[\d,]+\.?\d*', combined_text)
             parsed_prices = []
             for p in prices:
@@ -68,11 +135,11 @@ def search_duckduckgo(query: str) -> List[Dict[str, str]]:
                 "prices_found": parsed_prices,
             })
 
-        logger.info(f"[Tool] search_duckduckgo: returned {len(results)} results")
+        logger.info(f"[Tool] DuckDuckGo: returned {len(results)} results")
         return results
 
     except Exception as e:
-        logger.error(f"[Tool] search_duckduckgo error: {e}")
+        logger.error(f"[Tool] DuckDuckGo error: {e}")
         return [{"title": "Search failed", "url": "", "snippet": str(e), "prices_found": []}]
 
 

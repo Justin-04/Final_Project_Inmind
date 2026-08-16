@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Plus, MessageSquare, PanelLeftClose, PanelLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { api } from '@/services/api';
+import { toast } from 'sonner';
 import {
   Sheet,
   SheetContent,
@@ -134,19 +136,12 @@ function SidebarContent({
                 {label}
               </div>
               {items.map((conv) => (
-                <button
+                <ConversationItem
                   key={conv.id}
-                  onClick={() => onSelect(conv.id)}
-                  className={cn(
-                    'w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors mb-0.5',
-                    activeId === conv.id
-                      ? 'bg-cyan-500/10 text-cyan-200 border border-cyan-500/20'
-                      : 'text-muted-foreground hover:bg-white/5 border border-transparent'
-                  )}
-                >
-                  <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-                  <span className="truncate">{conv.title}</span>
-                </button>
+                  conv={conv}
+                  isActive={activeId === conv.id}
+                  onSelect={onSelect}
+                />
               ))}
             </div>
           ))
@@ -169,6 +164,66 @@ function SidebarContent({
         ))}
       </div>
     </div>
+  );
+}
+
+function ConversationItem({ conv, isActive, onSelect }: { conv: ConversationMeta; isActive: boolean; onSelect: (id: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(conv.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleDoubleClick = () => {
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 50);
+  };
+
+  const handleSave = async () => {
+    setEditing(false);
+    const newTitle = title.trim();
+    if (!newTitle || newTitle === conv.title) {
+      setTitle(conv.title);
+      return;
+    }
+    try {
+      await api.renameConversation(conv.id, newTitle);
+      conv.title = newTitle; // Update in-place
+    } catch {
+      setTitle(conv.title);
+      toast.error('Failed to rename');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleSave();
+    if (e.key === 'Escape') { setTitle(conv.title); setEditing(false); }
+  };
+
+  return (
+    <button
+      onClick={() => !editing && onSelect(conv.id)}
+      onDoubleClick={handleDoubleClick}
+      className={cn(
+        'w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors mb-0.5',
+        isActive
+          ? 'bg-cyan-500/10 text-cyan-200 border border-cyan-500/20'
+          : 'text-muted-foreground hover:bg-white/5 border border-transparent'
+      )}
+    >
+      <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={handleKeyDown}
+          className="flex-1 bg-transparent border-b border-cyan-500/50 outline-none text-sm text-cyan-200 px-0"
+          autoFocus
+        />
+      ) : (
+        <span className="truncate" title="Double-click to rename">{title}</span>
+      )}
+    </button>
   );
 }
 

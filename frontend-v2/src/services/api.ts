@@ -126,6 +126,25 @@ export const api = {
     return request<{ documents: KnowledgeDocument[] }>('/api/v1/admin/documents');
   },
 
+  getConversations(userId: string) {
+    return request<{ conversations: Array<{ conversation_id: string; created_at: string; updated_at: string }> }>(
+      `/api/v1/conversations?user_id=${encodeURIComponent(userId)}`
+    );
+  },
+
+  getConversation(conversationId: string) {
+    return request<{ conversation_id: string; messages: Array<{ role: string; content: string; timestamp: string }> }>(
+      `/api/v1/conversations/${conversationId}`
+    );
+  },
+
+  renameConversation(conversationId: string, title: string) {
+    return request<{ status: string; title: string }>(`/api/v1/conversations/${conversationId}/rename`, {
+      method: 'PUT',
+      body: JSON.stringify({ title }),
+    });
+  },
+
   ingest(pdfBase64: string, droneModel: string, sourceName: string) {
     return request<{ status: string; result?: any; message?: string }>('/api/v1/admin/ingest', {
       method: 'POST',

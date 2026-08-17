@@ -1,0 +1,8 @@
+frontend-v2/node_modules
+frontend/node_modules
+**/__pycache__
+**/.env
+.git
+*.pyc
+**/.vscode
+report/

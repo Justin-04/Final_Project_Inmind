@@ -65,11 +65,11 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     if confidence >= 0.85:
         route_map = {"rag": "rag_agent", "diagnostic": "diagnostic_agent", "pricing": "pricing_agent"}
         route = route_map.get(intent, "rag_agent")
-        print(f"\n🎯 [Supervisor] BERT confident ({confidence:.2f}) → fast routing to {route}")
+        print(f"\n  [Supervisor] BERT confident ({confidence:.2f}) -> fast routing to {route}")
         return {"route": route, "iteration_count": state.get("iteration_count", 0) + 1}
 
-    # Slow path: BERT unsure → LLM decides
-    print("\n🎯 [Supervisor] BERT unsure → LLM deciding route...")
+    # Slow path: BERT unsure → LLM decides (handles general/greeting queries too)
+    print(f"\n  [Supervisor] BERT unsure ({confidence:.2f}) -> LLM deciding route...")
     result = _supervisor.route(
         query=state["query"],
         conversation_history=state.get("conversation_history", []),

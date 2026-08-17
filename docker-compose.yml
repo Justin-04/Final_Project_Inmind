@@ -1,9 +1,10 @@
-version: '3.9'
-
 services:
+  # ─────────────────────────────────────────────────────────────────────
+  # Frontend (React + Vite)
+  # ─────────────────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend
+      context: ./frontend-v2
       dockerfile: Dockerfile
     container_name: frontend
     ports:
@@ -11,39 +12,42 @@ services:
     depends_on:
       - agent-system-a
     networks:
-      - dji-rag-network
+      - frontend-net
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Agent System A (LangGraph Orchestrator)
+  # ─────────────────────────────────────────────────────────────────────
   agent-system-a:
     build:
-      context: ./services/agent-system-a
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/agent-system-a/Dockerfile
     container_name: agent-system-a
     ports:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
-      - QDRANT_URL=http://vector-db:6333
       - MCP_SERVER_URL=http://mcp-server:8002
       - AGENT_B_URL=http://agent-system-b:8001
-      - WHISPER_URL=http://whisper-stt-service:9000
-      - MONGODB_URI=${MONGODB_URI}
+      - MONGODB_URI=mongodb://mongodb:27017/dji_rag
+      - REDIS_URL=redis://redis-cache:6379
+      - BERT_MODEL_PATH=/app/models/bert_intent_classifier/model
+      - RATE_LIMIT_REQUESTS=20
+      - RATE_LIMIT_WINDOW=60
     depends_on:
-      - vector-db
       - mcp-server
       - agent-system-b
-      - whisper-stt-service
+      - mongodb
+      - redis
     networks:
-      - dji-rag-network
+      - frontend-net
+      - backend-net
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Agent System B (Pricing ReAct Agent)
+  # ─────────────────────────────────────────────────────────────────────
   agent-system-b:
     build:
       context: ./services/agent-system-b
@@ -55,10 +59,17 @@ services:
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AGENT_B_MODEL=${AGENT_B_MODEL:-gpt-4o-mini}
+      - SERPAPI_KEY=${SERPAPI_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
     networks:
-      - dji-rag-network
+      - backend-net
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────
+  # MCP Server (RAG Tools + Error Codes + Ingestion)
+  # ─────────────────────────────────────────────────────────────────────
   mcp-server:
     build:
       context: ./services/mcp-server
@@ -71,62 +82,76 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - AWS_REGION=${AWS_REGION:-eu-north-1}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-final-project-inmind}
       - QDRANT_URL=http://vector-db:6333
       - REDIS_URL=redis://redis-cache:6379
     depends_on:
       - vector-db
       - redis
     networks:
-      - dji-rag-network
+      - backend-net
     restart: unless-stopped
 
-  whisper-stt-service:
-    build:
-      context: ./services/whisper-stt-service
-      dockerfile: Dockerfile
-    container_name: whisper-stt-service
-    ports:
-      - "9000:9000"
-    environment:
-      - PYTHONUNBUFFERED=1
-      - AGENT_A_URL=http://agent-system-a:8000
-    networks:
-      - dji-rag-network
-    restart: unless-stopped
-
+  # ─────────────────────────────────────────────────────────────────────
+  # Infrastructure: Qdrant (Vector DB)
+  # ─────────────────────────────────────────────────────────────────────
   vector-db:
     image: qdrant/qdrant:latest
     container_name: vector-db
     ports:
       - "6333:6333"
-      - "6334:6334"
-    environment:
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
     volumes:
       - qdrant-storage:/qdrant/storage
     networks:
-      - dji-rag-network
+      - backend-net
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Infrastructure: Redis (Caching + Rate Limiting)
+  # ─────────────────────────────────────────────────────────────────────
   redis:
     image: redis/redis-stack:latest
     container_name: redis-cache
     ports:
       - "6380:6379"
+      - "8083:8001"
     volumes:
       - redis-storage:/data
     networks:
-      - dji-rag-network
+      - backend-net
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Infrastructure: MongoDB (Conversations + Users + Feedback)
+  # ─────────────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-storage:/data/db
+    networks:
+      - backend-net
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────────────────────────────────
 networks:
-  dji-rag-network:
+  frontend-net:
+    driver: bridge
+  backend-net:
     driver: bridge
 
+# ─────────────────────────────────────────────────────────────────────
+# Volumes
+# ─────────────────────────────────────────────────────────────────────
 volumes:
   qdrant-storage:
     driver: local
   redis-storage:
+    driver: local
+  mongo-storage:
     driver: local

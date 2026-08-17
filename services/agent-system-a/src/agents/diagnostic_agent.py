@@ -15,6 +15,10 @@ from typing import Dict, Any, List
 import httpx
 from openai import OpenAI
 
+from middleware.circuit_breaker import CircuitBreakerOpen
+# Import shared MCP circuit breaker from rag_agent
+from agents.rag_agent import mcp_circuit_breaker
+
 logger = logging.getLogger(__name__)
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8002")
@@ -117,45 +121,57 @@ class DiagnosticAgent:
             return [{"tool": "search_manual", "query": query}]
 
     def _lookup_code(self, error_code: str) -> Dict[str, Any]:
-        """Call MCP server to look up an error code."""
+        """Call MCP server to look up an error code (protected by circuit breaker)."""
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(
-                    f"{self.mcp_url}/api/v1/call_tool",
-                    json={
-                        "tool_name": "lookup_dji_error_code_db",
-                        "arguments": {"error_code": error_code},
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            def _do_lookup():
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(
+                        f"{self.mcp_url}/api/v1/call_tool",
+                        json={
+                            "tool_name": "lookup_dji_error_code_db",
+                            "arguments": {"error_code": error_code},
+                        },
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+
+            data = mcp_circuit_breaker.call(_do_lookup)
 
             if data.get("status") == "success":
                 return data["output"]
             return None
 
+        except CircuitBreakerOpen as e:
+            logger.warning(f"Error code lookup blocked: {e}")
+            return None
         except Exception as e:
             logger.warning(f"Error code lookup failed: {e}")
             return None
 
     def _search_manual(self, query: str) -> List[Dict[str, Any]]:
-        """Search manual for troubleshooting context."""
+        """Search manual for troubleshooting context (protected by circuit breaker)."""
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(
-                    f"{self.mcp_url}/api/v1/call_tool",
-                    json={
-                        "tool_name": "query_dji_manual_vector_db",
-                        "arguments": {"query": query, "top_k": 3},
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            def _do_search():
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(
+                        f"{self.mcp_url}/api/v1/call_tool",
+                        json={
+                            "tool_name": "query_dji_manual_vector_db",
+                            "arguments": {"query": query, "top_k": 3},
+                        },
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+
+            data = mcp_circuit_breaker.call(_do_search)
 
             if data.get("status") == "success":
                 return data["output"]
             return []
 
+        except CircuitBreakerOpen as e:
+            logger.warning(f"Diagnostic manual search blocked: {e}")
+            return []
         except Exception as e:
             logger.warning(f"Diagnostic manual search failed: {e}")
             return []

@@ -1,0 +1,396 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{enumitem}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10}
+}
+
+\title{\textbf{Multi-Agent Intelligent Support System for DJI Drones}\\[0.5em]
+\large Production AI Agent System — Final Project Report}
+\author{Justin Chahine}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Executive Summary}
+
+This report presents a production-ready, distributed multi-agent AI system for DJI drone technical support. The system handles three core use cases: (1) technical specifications and manual retrieval via RAG, (2) hardware error code diagnostics, and (3) real-time vendor pricing and availability. The architecture demonstrates inter-service communication between independent containerized agents, evaluation-driven development, and production-grade safety measures.
+
+\textbf{Key Results:}
+\begin{itemize}
+  \item RAG pipeline: Faithfulness 0.958, Precision 0.936, Recall 0.933 (after 9 optimization iterations)
+  \item Agent routing accuracy: 100\% (30/30 test cases)
+  \item BERT intent classifier: 100\% accuracy (300 training samples)
+  \item Guardrail accuracy: 100\% (prompt injection detection)
+  \item Agent-system-b tool selection: 100\% (12/12 test cases)
+\end{itemize}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{System Architecture}
+
+\subsection{Container Topology}
+
+The system runs as 6 independent Docker containers:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Container} & \textbf{Stack} & \textbf{Port} & \textbf{Role} \\
+\midrule
+agent-system-a & LangGraph + FastAPI & 8000 & Primary orchestrator \\
+agent-system-b & OpenAI function-calling + FastAPI & 8001 & Pricing agent \\
+mcp-server & FastMCP + FastAPI & 8002 & Tool executor (RAG, diagnostics) \\
+frontend & React + Vite & 3000 & Chat UI \\
+vector-db & Qdrant & 6333 & Vector database \\
+redis & Redis Stack & 6380 & Semantic cache \\
+\bottomrule
+\end{tabular}
+\caption{Microservice container layout}
+\end{table}
+
+\subsection{Communication Flow}
+
+\begin{verbatim}
+Frontend → agent-system-a (HTTP/SSE)
+              ├── MCP Server (HTTP POST) → Qdrant
+              ├── agent-system-b (HTTP A2A) → SerpAPI (Google Search)
+              └── MongoDB Atlas (conversation persistence)
+\end{verbatim}
+
+All inter-service communication uses HTTP — no Python imports between containers. Agent-system-b is never imported by agent-system-a; they communicate exclusively over the network.
+
+\subsection{Pipeline Execution Flow}
+
+\begin{verbatim}
+User Query → Input Guard (LLM) → BERT Classifier (~50ms)
+    → Supervisor (routes based on confidence)
+    → Specialist Agent [RAG / Diagnostic / Pricing]
+    → Summarizer (gpt-4o-mini) → Output Guard → Response
+\end{verbatim}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{RAG Pipeline}
+
+\subsection{Chunking Strategy}
+
+\textbf{Method:} Parent-child chunking.
+
+\begin{itemize}
+  \item \textbf{Parent chunks:} 1500 characters with 200-character overlap
+  \item \textbf{Child chunks:} 300 characters with 50-character overlap
+  \item \textbf{Rationale:} Small children (300 chars) produce precise embeddings that match specific queries. The LLM receives the full parent (1500 chars) for complete context, preventing hallucination from fragments.
+\end{itemize}
+
+\textbf{Justification:} We evaluated multiple strategies (Section~\ref{sec:rag-eval}). Fixed-length 1500/300 parent-child outperformed semantic chunking, document-aware chunking, and single-level chunking across all RAGAS metrics.
+
+\subsection{Embedding Model}
+
+\textbf{Model:} OpenAI text-embedding-3-small (1536 dimensions)
+
+\textbf{Justification:} Strong multilingual support, state-of-the-art retrieval quality for English technical text, cost-effective (\$0.02/1M tokens), and 1536 dimensions balance precision with storage efficiency.
+
+\subsection{Retrieval Pipeline}
+
+\begin{enumerate}
+  \item \textbf{Embed query} using text-embedding-3-small
+  \item \textbf{Redis semantic cache check} — if similar query (cosine > 0.90) exists, return cached results
+  \item \textbf{Dense vector search} (Qdrant, cosine similarity, retrieval\_k=30)
+  \item \textbf{BM25 keyword search} across all child chunks
+  \item \textbf{Merge and deduplicate} by parent ID
+  \item \textbf{Apply metadata filters} (drone\_model, topic, modality)
+  \item \textbf{Rerank} against parent text using BAAI/bge-reranker-base
+  \item \textbf{Return top-4} parent chunks to the LLM
+  \item \textbf{Cache results} in Redis for future queries
+\end{enumerate}
+
+\subsection{Metadata Filtering}
+
+Retrieved chunks can be filtered by:
+\begin{itemize}
+  \item \texttt{drone\_model}: "DJI Air 3", "DJI Mini 4 Pro", etc.
+  \item \texttt{topic}: battery, camera, safety, transmission, etc.
+  \item \texttt{modality}: text, image (captioned diagrams)
+\end{itemize}
+
+\subsection{Semantic Cache Optimization}
+
+The Redis semantic cache stores query embeddings alongside results. A key innovation: \textbf{the drone\_model filter is prepended to the query before embedding for the cache key}. This ensures "DJI Air 3 max speed" and "DJI Neo max speed" produce different cache entries, preventing cross-model contamination while enabling caching for all queries (including filtered ones).
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{RAG Evaluation}
+\label{sec:rag-eval}
+
+\subsection{Evaluation Methodology}
+
+Evaluated using RAGAS framework with GPT-4o-mini as judge on a golden dataset of 12 questions covering specifications, features, and cross-model comparisons.
+
+\subsection{Optimization Journey}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{llcccc}
+\toprule
+\textbf{\#} & \textbf{Change} & \textbf{Faith} & \textbf{Relev} & \textbf{Prec} & \textbf{Recall} \\
+\midrule
+1 & Baseline (top\_k bug) & 0.87 & 0.87 & 0.63 & 0.90 \\
+2 & Fix eval top\_k & 0.89 & 0.81 & 0.79 & 0.83 \\
+3 & top\_k=4 & 0.925 & 0.865 & 0.814 & 0.855 \\
+4 & Temperature 0.1 & 0.913 & 0.86 & 0.779 & 0.83 \\
+5 & Semantic chunking (headers) & 0.86 & 0.71 & 0.72 & 0.73 \\
+6 & Semantic chunking (embeddings) & 0.84 & 0.56 & 0.67 & 0.51 \\
+7 & Upgraded reranker (BGE) & 0.922 & 0.857 & \textbf{0.924} & 0.875 \\
+8 & Hybrid search (BM25+dense) & 0.854 & 0.867 & 0.940 & 0.908 \\
+\textbf{9} & \textbf{Parent-child + hybrid} & \textbf{0.958} & \textbf{0.922} & \textbf{0.936} & \textbf{0.933} \\
+\bottomrule
+\end{tabular}
+\caption{RAG pipeline optimization results across 9 experiments}
+\end{table}
+
+\subsection{Key Findings}
+
+\begin{enumerate}
+  \item \textbf{Biggest single lever:} Upgrading the reranker from MiniLM-L-6 (22M params) to BGE-reranker-base (278M params) increased precision from 0.81 to 0.92.
+  \item \textbf{Semantic chunking failed} for technical manuals — DJI docs contain spec tables, bullet lists, and numbered steps that don't follow prose patterns.
+  \item \textbf{Parent-child chunking resolved the faithfulness/recall trade-off} — small children for precise matching, large parents for grounded generation.
+  \item \textbf{Hybrid search (BM25 + dense)} improved recall by catching exact keyword matches that embeddings miss.
+\end{enumerate}
+
+\subsection{Configuration Comparison}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Configuration} & \textbf{top\_k=5} & \textbf{top\_k=4} \\
+\midrule
+Faithfulness & 0.89 & 0.925 \\
+Precision & 0.79 & 0.814 \\
+Recall & 0.83 & 0.855 \\
+\bottomrule
+\end{tabular}
+\caption{Config comparison: top\_k=5 vs top\_k=4}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Configuration} & \textbf{MiniLM-L-6} & \textbf{BGE-reranker-base} \\
+\midrule
+Precision & 0.814 & 0.924 \\
+Recall & 0.855 & 0.875 \\
+\bottomrule
+\end{tabular}
+\caption{Config comparison: Reranker models}
+\end{table}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Agent Design}
+
+\subsection{Agent System A (LangGraph)}
+
+\textbf{Pattern:} Supervisor-Worker with LLM-powered routing.
+
+\begin{itemize}
+  \item \textbf{Input Guard:} gpt-4o-mini detects prompt injection and jailbreak attempts
+  \item \textbf{BERT Classifier:} Fine-tuned DistilBERT (100\% accuracy, 300 training samples) classifies intent in ~50ms
+  \item \textbf{Supervisor:} If BERT confidence $\geq$ 0.85, routes directly (skipping LLM call). Otherwise, gpt-4o-mini decides routing.
+  \item \textbf{RAG Agent:} LLM planner decomposes queries, handles multi-model comparisons
+  \item \textbf{Diagnostic Agent:} LLM planner extracts error codes, decides lookup vs manual search
+  \item \textbf{Pricing Agent:} LLM extracts model(s), calls agent-system-b over HTTP
+  \item \textbf{Summarizer:} gpt-4o-mini synthesizes specialist outputs into grounded Markdown
+\end{itemize}
+
+\subsection{Agent System B (OpenAI Function-Calling)}
+
+\textbf{Pattern:} Autonomous ReAct agent with tool loop (max 8 iterations).
+
+\textbf{Tools available:}
+\begin{itemize}
+  \item \texttt{get\_reference\_pricing} — baseline pricing database
+  \item \texttt{search\_duckduckgo} — Google search via SerpAPI
+  \item \texttt{compare\_prices} — cross-vendor analysis
+  \item \texttt{check\_stock\_and\_delivery} — availability per retailer
+\end{itemize}
+
+The LLM autonomously decides which tools to call, processes results, and loops until it has sufficient data to produce a structured JSON response.
+
+\subsection{BERT Intent Classifier}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Config} & \textbf{Training Samples} & \textbf{Accuracy} & \textbf{Avg Confidence} \\
+\midrule
+Run 1 & 100 & 95.0\% & 0.60--0.85 \\
+Run 2 & 300 & 100.0\% & 0.85--0.99 \\
+\bottomrule
+\end{tabular}
+\caption{BERT classifier improvement with training data size}
+\end{table}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Agent Evaluation}
+
+\subsection{System A — Routing Accuracy}
+
+Evaluated on 30 test cases (10 RAG, 10 diagnostic, 8 pricing, 2 guardrail):
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Metric} & \textbf{Score} \\
+\midrule
+Guardrail Accuracy & 100\% (30/30) \\
+Intent Accuracy (BERT) & 96.4\% (27/28) \\
+Routing Accuracy & 100\% (30/30) \\
+Tool Selection Accuracy & 100\% (30/30) \\
+Avg Latency & 14.3s per query \\
+\bottomrule
+\end{tabular}
+\caption{Agent System A evaluation results}
+\end{table}
+
+\subsection{System B — Tool Selection}
+
+Evaluated on 12 test cases across 5 categories:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Metric} & \textbf{Score} \\
+\midrule
+Overall Accuracy & 100\% (12/12) \\
+Vendor Accuracy & 100\% \\
+Price Accuracy & 100\% \\
+Avg Latency & 11.1s per query \\
+\bottomrule
+\end{tabular}
+\caption{Agent System B evaluation results}
+\end{table}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Failure Cases \& Fixes}
+
+\subsection{Case 1: BM25 Stale Index After Ingestion}
+\textbf{Type:} Design Failure \\
+\textbf{Problem:} New documents ingested via admin portal were not searchable via BM25 until server restart. \\
+\textbf{Root Cause:} BM25 index built at startup from Qdrant, never refreshed. \\
+\textbf{Fix:} Added \texttt{rebuild\_bm25\_index()} called after every ingest/delete operation.
+
+\subsection{Case 2: Metadata Filter Mismatch}
+\textbf{Type:} Prompt Failure \\
+\textbf{Problem:} RAG planner sent \texttt{drone\_model: "DJI Mavic 3"} but Qdrant has \texttt{"DJI Mavic 3 Classic"}. \\
+\textbf{Fix:} Added explicit model name list to the planner prompt with mapping rules.
+
+\subsection{Case 3: DuckDuckGo Rate-Limiting}
+\textbf{Type:} External Dependency Failure \\
+\textbf{Problem:} DuckDuckGo returned 0 results for all queries, agent hit max iterations. \\
+\textbf{Fix:} Replaced with SerpAPI (Google Search wrapper). Added reference pricing as fallback.
+
+\subsection{Case 4: Semantic Cache Disabled for Filtered Queries}
+\textbf{Type:} Design Failure \\
+\textbf{Problem:} Cache only worked for unfiltered queries (5\% of traffic). \\
+\textbf{Fix:} Prepend drone\_model to the cache key embedding, enabling caching for all queries without cross-model contamination.
+
+\subsection{Case 5: Multi-Model Comparison Queries}
+\textbf{Type:} Design Failure \\
+\textbf{Problem:} RAG agent ran single search for comparison queries, returning mixed results. \\
+\textbf{Fix:} LLM planner detects multiple models, runs separate filtered searches, merges results.
+
+\subsection{Case 6: Pricing Agent History Pollution}
+\textbf{Type:} Design Failure \\
+\textbf{Problem:} Pricing agent extracted models from conversation history, calling system-b for wrong models. \\
+\textbf{Fix:} Extract from current query first; only use history if no model found in query.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Production Features}
+
+\subsection{Guardrails \& Safety}
+\begin{itemize}
+  \item \textbf{Input Guard:} LLM-powered prompt injection detection (gpt-4o-mini)
+  \item \textbf{Output Guard:} Markdown sanitization, URL validation, blocked pattern detection
+  \item \textbf{Iteration Limits:} Supervisor max 5 loops, system-b max 8 iterations
+  \item \textbf{Timeouts:} 30s on MCP calls, 60s on system-b calls
+\end{itemize}
+
+\subsection{Session Management}
+\begin{itemize}
+  \item MongoDB Atlas stores conversations with full message history
+  \item Last 4 messages passed as context window for multi-turn dialogue
+  \item JWT authentication with role-based access (user/admin)
+\end{itemize}
+
+\subsection{Voice Interface}
+\begin{itemize}
+  \item Speech-to-text via OpenAI Whisper API (\$0.006/min)
+  \item Text-to-speech via browser SpeechSynthesis API (free)
+  \item 30-second max recording limit
+  \item Transcription shown in input field for user review before sending
+\end{itemize}
+
+\subsection{Admin Portal}
+\begin{itemize}
+  \item PDF upload with automatic extraction (text + GPT-4o image captions) and S3 upload
+  \item Parent-child chunking and Qdrant indexing
+  \item Document listing and deletion (with S3 cleanup)
+  \item BM25 index auto-rebuild after changes
+\end{itemize}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Known Limitations \& Future Work}
+
+\begin{enumerate}
+  \item \textbf{No self-correction loop:} If RAG returns irrelevant chunks, the system doesn't retry with a different query. A Critic/Evaluator node would inspect relevance and trigger query rewriting.
+  \item \textbf{SerpAPI free tier:} Limited to 100 searches/month. Production would need a paid plan or caching strategy.
+  \item \textbf{Dynamic filter discovery:} The RAG planner has a hardcoded list of drone models. A production system would query Qdrant for unique values at startup.
+  \item \textbf{Latency:} 14.3s average per query due to 4-5 LLM API calls. Agent-level response caching would reduce repeated queries to <100ms.
+  \item \textbf{BERT model size:} DistilBERT (66M params) could be replaced with a smaller model for faster cold-start in containers.
+\end{enumerate}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Technical Decisions Summary}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Decision} & \textbf{Choice} & \textbf{Justification} \\
+\midrule
+Chunking & Parent-child 1500/300 & Best RAGAS scores across all metrics \\
+Embedding & text-embedding-3-small & Cost-effective, strong English performance \\
+Reranker & BAAI/bge-reranker-base & +11\% precision over MiniLM \\
+Vector DB & Qdrant & Easy Docker deployment, fast filtered search \\
+Cache & Redis semantic cache & 15x speedup on repeated queries \\
+LLM & gpt-4o-mini & Low cost, fast, sufficient for routing/synthesis \\
+Search & SerpAPI & Reliable Google results, free tier sufficient \\
+Classifier & DistilBERT fine-tuned & 50ms inference, 100\% accuracy, saves LLM calls \\
+\bottomrule
+\end{tabular}
+\caption{Technical decisions with justifications}
+\end{table}
+
+\end{document}

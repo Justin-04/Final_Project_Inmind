@@ -21,9 +21,15 @@ Available agents:
 - "rag_agent": For technical questions about drone specs, features, how-to guides, manual content, comparisons between drones
 - "diagnostic_agent": For error codes, LED patterns, calibration failures, troubleshooting hardware problems
 - "pricing_agent": For pricing, purchasing, vendor comparisons, deals, stock availability, where to buy
+- "general": For greetings, thank you messages, chitchat, "who are you", or anything that is NOT a DJI drone question
+
+RULES:
+- If the query is a greeting (hello, hi, hey), thanks, or general chitchat → "general"
+- If the query asks about you/the system (who are you, what can you do) → "general"
+- Only use rag/diagnostic/pricing for actual DJI drone questions
 
 Respond with ONLY a JSON object:
-{"route": "rag_agent" | "diagnostic_agent" | "pricing_agent", "reasoning": "one sentence why"}"""
+{"route": "rag_agent" | "diagnostic_agent" | "pricing_agent" | "general", "reasoning": "one sentence why"}"""
 
 
 class Supervisor:
@@ -73,9 +79,13 @@ class Supervisor:
             reasoning = result.get("reasoning", "")
 
             # Validate route
-            valid_routes = ["rag_agent", "diagnostic_agent", "pricing_agent"]
+            valid_routes = ["rag_agent", "diagnostic_agent", "pricing_agent", "general"]
             if route not in valid_routes:
                 route = "rag_agent"
+
+            # "general" maps to "summarizer" in the graph (skip specialists)
+            if route == "general":
+                route = "summarizer"
 
             logger.info(f"Supervisor: {route} — {reasoning}")
             return {"route": route, "iteration_count": iteration_count + 1}

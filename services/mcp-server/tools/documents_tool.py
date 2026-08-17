@@ -234,11 +234,13 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
+        logger.info(f"  Step 1: PDF saved to temp ({len(file_bytes)} bytes)")
+
         # Step 2: Extract pages (text + images → S3)
-        # Use a temp images dir
         images_dir = os.path.join(tempfile.gettempdir(), "dji_images")
         os.makedirs(images_dir, exist_ok=True)
 
+        logger.info(f"  Step 2: Extracting PDF pages (caption={caption_images})...")
         pages = extract_pdf(
             pdf_path=tmp_path,
             doc_name=filename,
@@ -246,6 +248,7 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
             caption_images=caption_images,
             upload_to_s3=True,
         )
+        logger.info(f"  Step 2 done: {len(pages)} pages extracted")
 
         # Clean up temp PDF
         os.unlink(tmp_path)
@@ -254,18 +257,20 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
             return {"status": "error", "message": "No extractable content found in PDF"}
 
         # Add 'source' field required by ingestion chunking
-        # Override drone_model detection with user-provided value
         for page in pages:
             page["source"] = filename
             page["drone_model_override"] = drone_model
 
         # Step 3: Parent-child chunking
+        logger.info(f"  Step 3: Building parent-child chunks...")
         parents, children = build_parent_child_chunks(pages)
+        logger.info(f"  Step 3 done: {len(parents)} parents, {len(children)} children")
 
         if not children:
             return {"status": "error", "message": "No chunks created from PDF"}
 
         # Step 4: Embed + upsert to Qdrant
+        logger.info(f"  Step 4: Embedding + upserting to Qdrant...")
         qdrant = _get_qdrant()
 
         # Ensure collection exists
@@ -281,6 +286,7 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
         for batch_idx in range(0, len(children), BATCH_SIZE):
             batch = children[batch_idx:batch_idx + BATCH_SIZE]
             texts = [child["text"] for child in batch]
+            logger.info(f"    Embedding batch {batch_idx // BATCH_SIZE + 1} ({len(batch)} chunks)...")
             embeddings = get_embeddings(texts)
 
             points = [
@@ -300,7 +306,8 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
             qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
             total_upserted += len(points)
 
-        logger.info(f"Ingested '{filename}': {len(pages)} pages, {total_upserted} chunks")
+        logger.info(f"  Step 4 done: {total_upserted} chunks upserted")
+        logger.info(f"Ingestion complete: '{filename}' — {len(pages)} pages, {total_upserted} chunks")
 
         # Rebuild BM25 index after ingestion
         try:
@@ -317,5 +324,5 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
         }
 
     except Exception as e:
-        logger.error(f"Ingestion failed for '{filename}': {e}")
+        logger.error(f"Ingestion failed for '{filename}': {e}", exc_info=True)
         return {"status": "error", "message": str(e)}

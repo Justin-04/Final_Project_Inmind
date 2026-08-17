@@ -16,9 +16,14 @@ from typing import Dict, Any, List
 import httpx
 from openai import OpenAI
 
+from middleware.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+
 logger = logging.getLogger(__name__)
 
 AGENT_B_URL = os.getenv("AGENT_B_URL", "http://localhost:8001")
+
+# Circuit breaker for agent-system-b calls
+agent_b_circuit_breaker = CircuitBreaker("agent-system-b", failure_threshold=3, recovery_timeout=30)
 
 PLANNER_PROMPT = """You are a pricing query analyzer for DJI drones.
 Given the user's query and conversation history, extract the drone model(s) to look up pricing for.
@@ -125,23 +130,33 @@ class PricingAgent:
             return {"models": [], "query": query}
 
     def _call_system_b(self, drone_model: str, query: str) -> Dict[str, Any]:
-        """Make a single HTTP call to agent-system-b."""
+        """Make a single HTTP call to agent-system-b (protected by circuit breaker)."""
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(
-                    f"{self.agent_b_url}/v1/pricing",
-                    json={
-                        "drone_model": drone_model,
-                        "query": query,
-                        "currency": "USD",
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            def _do_call():
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(
+                        f"{self.agent_b_url}/v1/pricing",
+                        json={
+                            "drone_model": drone_model,
+                            "query": query,
+                            "currency": "USD",
+                        },
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+
+            data = agent_b_circuit_breaker.call(_do_call)
 
             logger.info(f"Pricing: got {len(data.get('vendors', []))} vendors for '{drone_model}'")
             return data
 
+        except CircuitBreakerOpen as e:
+            logger.warning(f"Pricing call blocked: {e}")
+            return {
+                "error": "Pricing service temporarily unavailable. Please try again shortly.",
+                "vendors": [],
+                "drone_model": drone_model,
+            }
         except httpx.TimeoutException:
             logger.error(f"Pricing timeout for '{drone_model}'")
             return {"error": "Pricing service timeout", "vendors": [], "drone_model": drone_model}

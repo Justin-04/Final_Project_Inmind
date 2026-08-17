@@ -31,6 +31,10 @@ from graph.workflow import build_graph
 from db.conversation_store import ConversationStore
 from auth.routes import router as auth_router, set_users_collection
 from auth.middleware import get_current_user, require_admin
+from pipeline.response_cache import ResponseCache
+from pipeline.input_guard import InputGuard
+from middleware.rate_limiter import check_rate_limit, get_rate_limiter
+from middleware.circuit_breaker import CircuitBreaker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,11 +45,12 @@ logger = logging.getLogger(__name__)
 
 conversation_store: Optional[ConversationStore] = None
 agent_graph = None
+response_cache: Optional[ResponseCache] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global conversation_store, agent_graph
+    global conversation_store, agent_graph, response_cache
 
     # Startup
     mongodb_uri = os.getenv("MONGODB_URI")
@@ -59,6 +64,13 @@ async def lifespan(app: FastAPI):
 
     agent_graph = build_graph()
     logger.info("LangGraph compiled ✓")
+
+    # Initialize response cache
+    response_cache = ResponseCache()
+    if response_cache.available:
+        logger.info("Response cache: Redis connected ✓")
+    else:
+        logger.warning("Response cache: Redis unavailable — caching disabled")
 
     yield
 
@@ -111,6 +123,45 @@ class ChatResponse(BaseModel):
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Error indicators that signal a response should NOT be cached
+_ERROR_PHRASES = [
+    "temporarily unavailable",
+    "service unavailable",
+    "timed out",
+    "no response generated",
+]
+
+
+def _is_error_response(response: str, result: dict) -> bool:
+    """
+    Check if a pipeline response is an error/failure that should not be cached.
+
+    Two checks:
+    1. Structural: if the specialist agent returned no useful data (0 chunks, 0 vendors, error field)
+    2. Text: if response contains known infrastructure error phrases
+    """
+    # Check if any agent returned an explicit error
+    for key in ("rag_result", "diagnostic_result", "pricing_result"):
+        agent_result = result.get(key)
+        if agent_result and agent_result.get("error"):
+            return True
+
+    # Check if RAG/diagnostic returned 0 chunks (means "I don't know" response)
+    route = result.get("route", "")
+    if route == "rag_agent":
+        rag_result = result.get("rag_result") or {}
+        if not rag_result.get("chunks"):
+            return True
+    elif route == "diagnostic_agent":
+        diag_result = result.get("diagnostic_result") or {}
+        if not diag_result.get("error_codes") and not diag_result.get("rag_chunks"):
+            return True
+
+    # Check for infrastructure error phrases
+    response_lower = response.lower()
+    return any(phrase in response_lower for phrase in _ERROR_PHRASES)
+
+
 def _get_tools_executed(result: dict) -> list:
     """Extract which tools were executed based on the pipeline result."""
     tools = []
@@ -155,12 +206,20 @@ def _get_tools_executed(result: dict) -> list:
 
 @app.get("/health")
 async def health_check():
+    from agents.rag_agent import mcp_circuit_breaker
+    from agents.pricing_agent import agent_b_circuit_breaker
+
     return {
         "status": "healthy",
         "service": "agent-system-a",
         "version": "1.0.0",
         "graph_loaded": agent_graph is not None,
         "mongodb_connected": conversation_store is not None,
+        "cache_available": response_cache.available if response_cache else False,
+        "circuit_breakers": {
+            "mcp_server": mcp_circuit_breaker.status,
+            "agent_system_b": agent_b_circuit_breaker.status,
+        },
     }
 
 
@@ -176,6 +235,16 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
     """
     if not agent_graph:
         raise HTTPException(status_code=503, detail="Agent graph not initialized")
+
+    # Rate limit check
+    limiter = get_rate_limiter()
+    user_id = user.get("username", request.user_id)
+    rate_result = limiter.check(user_id)
+    if not rate_result["allowed"]:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {rate_result['limit']} requests per minute. Retry in {rate_result['reset_in']}s.",
+        )
 
     try:
         # Get or create conversation
@@ -196,12 +265,41 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
             conversation_id = conversation_id or "no-db"
 
         print(f"\n{'='*60}")
-        print(f"  💬 CHAT REQUEST")
+        print(f"  CHAT REQUEST")
         print(f"  User: {request.user_id}")
         print(f"  Conv: {conversation_id}")
         print(f"  Query: {request.query}")
         print(f"  History: {len(conversation_history)} messages")
         print(f"{'='*60}")
+
+        # ── Response Cache: check for semantically similar cached response ──
+        if response_cache and response_cache.available:
+            print(f"\n  [Cache] Looking up similar queries...")
+            cached = response_cache.lookup(request.query)
+            if cached:
+                print(f"  [Cache] HIT! Score={cached['cache_score']:.4f} (threshold=0.95)")
+                print(f"  [Cache] Returning cached response, skipping full pipeline")
+                final_response = cached["response"]
+
+                # Save to MongoDB even on cache hit
+                if conversation_store:
+                    await conversation_store.add_message(conversation_id, "assistant", final_response)
+
+                return ChatResponse(
+                    conversation_id=conversation_id,
+                    response=final_response,
+                    intent=cached.get("intent", "unknown"),
+                    metadata={
+                        "confidence": cached.get("metadata", {}).get("confidence", 0.0),
+                        "route": cached.get("metadata", {}).get("route", ""),
+                        "cache_hit": True,
+                        "cache_score": cached["cache_score"],
+                    },
+                )
+            else:
+                print(f"  [Cache] MISS — running full pipeline")
+        else:
+            print(f"  [Cache] Disabled (Redis unavailable)")
 
         # Run the LangGraph pipeline
         result = agent_graph.invoke({
@@ -228,8 +326,35 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
         if conversation_store:
             await conversation_store.add_message(conversation_id, "assistant", final_response)
 
+        # ── Response Cache: store this response for future similar queries ──
+        # Skip caching for:
+        # - Pricing queries (prices change frequently)
+        # - Error/failure responses (service was temporarily unavailable)
+        # - General/greeting queries (trivial, not worth caching)
+        if response_cache and response_cache.available:
+            intent = result.get("intent", "unknown")
+            route = result.get("route", "")
+            is_error_response = _is_error_response(final_response, result)
+            if intent == "pricing":
+                print(f"  [Cache] SKIP store — pricing intent (prices change)")
+            elif route == "summarizer":
+                print(f"  [Cache] SKIP store — general/greeting query")
+            elif is_error_response:
+                print(f"  [Cache] SKIP store — error response detected")
+            else:
+                response_cache.store(
+                    query=request.query,
+                    response=final_response,
+                    intent=intent,
+                    metadata={
+                        "confidence": result.get("confidence", 0.0),
+                        "route": result.get("route", ""),
+                    },
+                )
+                print(f"  [Cache] STORED response for query: '{request.query[:50]}'")
+
         print(f"\n{'='*60}")
-        print(f"  ✅ RESPONSE SENT ({len(final_response)} chars)")
+        print(f"  RESPONSE SENT ({len(final_response)} chars)")
         print(f"{'='*60}\n")
 
         return ChatResponse(
@@ -266,6 +391,16 @@ async def chat_stream(request: ChatRequest, user: dict = Depends(get_current_use
     """
     if not agent_graph:
         raise HTTPException(status_code=503, detail="Agent graph not initialized")
+
+    # Rate limit check
+    limiter = get_rate_limiter()
+    user_id = user.get("username", request.user_id)
+    rate_result = limiter.check(user_id)
+    if not rate_result["allowed"]:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {rate_result['limit']} requests per minute. Retry in {rate_result['reset_in']}s.",
+        )
 
     async def event_generator():
         try:
@@ -351,7 +486,7 @@ async def admin_ingest(request: dict, user: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="pdf_file, drone_model, and source_name are required")
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=600) as client:
             resp = await client.post(
                 f"{MCP_SERVER_URL}/api/v1/call_tool",
                 json={
@@ -443,6 +578,94 @@ async def admin_delete_document(source_name: str, user: dict = Depends(require_a
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feedback Endpoints (user thumbs up/down)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FeedbackRequest(BaseModel):
+    conversation_id: str = Field(..., description="Conversation this feedback is for")
+    message_index: int = Field(..., description="Index of the assistant message in the conversation")
+    rating: int = Field(..., description="+1 for thumbs up, -1 for thumbs down")
+    comment: Optional[str] = Field(default=None, description="Optional text feedback")
+
+
+@app.post("/api/v1/feedback")
+async def submit_feedback(request: FeedbackRequest, user: dict = Depends(get_current_user)):
+    """Submit thumbs up/down feedback for an assistant response."""
+    if not conversation_store:
+        raise HTTPException(status_code=503, detail="MongoDB not configured")
+
+    if request.rating not in (1, -1):
+        raise HTTPException(status_code=400, detail="Rating must be +1 or -1")
+
+    from datetime import datetime, timezone
+
+    feedback_doc = {
+        "conversation_id": request.conversation_id,
+        "message_index": request.message_index,
+        "rating": request.rating,
+        "comment": request.comment,
+        "user_id": user.get("username", "anonymous"),
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    feedback_collection = conversation_store.db["feedback"]
+    await feedback_collection.insert_one(feedback_doc)
+
+    logger.info(f"Feedback: {'thumbs up' if request.rating == 1 else 'thumbs down'} on {request.conversation_id}[{request.message_index}]")
+
+    return {"status": "saved", "rating": request.rating}
+
+
+@app.get("/api/v1/admin/feedback")
+async def admin_get_feedback(rating: Optional[int] = None, limit: int = 50, user: dict = Depends(require_admin)):
+    """Admin: Get all feedback, optionally filtered by rating (-1 for negative only)."""
+    if not conversation_store:
+        raise HTTPException(status_code=503, detail="MongoDB not configured")
+
+    feedback_collection = conversation_store.db["feedback"]
+
+    query_filter = {}
+    if rating is not None:
+        query_filter["rating"] = rating
+
+    cursor = feedback_collection.find(
+        query_filter,
+        {"_id": 0},
+    ).sort("created_at", -1).limit(limit)
+
+    items = await cursor.to_list(length=limit)
+
+    # Enrich with conversation snippet (the flagged message)
+    for item in items:
+        conv = await conversation_store.get_conversation(item["conversation_id"])
+        if conv and conv.get("messages"):
+            messages = conv["messages"]
+            msg_idx = item.get("message_index", -1)
+            if 0 <= msg_idx < len(messages):
+                item["flagged_message"] = messages[msg_idx].get("content", "")[:300]
+                # Also get the user question before it
+                if msg_idx > 0:
+                    item["user_query"] = messages[msg_idx - 1].get("content", "")[:200]
+            item["total_messages"] = len(messages)
+            item["conversation_title"] = conv.get("title", "")
+
+    # Summary stats
+    total_feedback = await feedback_collection.count_documents({})
+    positive = await feedback_collection.count_documents({"rating": 1})
+    negative = await feedback_collection.count_documents({"rating": -1})
+
+    return {
+        "feedback": items,
+        "stats": {
+            "total": total_feedback,
+            "positive": positive,
+            "negative": negative,
+            "satisfaction_rate": round(positive / total_feedback * 100, 1) if total_feedback > 0 else 0,
+        },
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

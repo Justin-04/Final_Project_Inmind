@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Plus, MessageSquare, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { Plus, MessageSquare, PanelLeftClose, PanelLeft, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -29,6 +29,7 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   onNew: () => void;
   onSuggestion: (text: string) => void;
+  onDelete: (id: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }
@@ -39,6 +40,7 @@ export default function ChatSidebar({
   onSelect,
   onNew,
   onSuggestion,
+  onDelete,
   collapsed,
   onToggleCollapse,
 }: SidebarProps) {
@@ -51,6 +53,7 @@ export default function ChatSidebar({
       onSelect={(id) => { onSelect(id); setMobileOpen(false); }}
       onNew={() => { onNew(); setMobileOpen(false); }}
       onSuggestion={(t) => { onSuggestion(t); setMobileOpen(false); }}
+      onDelete={onDelete}
     />
   );
 
@@ -100,12 +103,14 @@ function SidebarContent({
   onSelect,
   onNew,
   onSuggestion,
+  onDelete,
 }: {
   conversations: ConversationMeta[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
   onSuggestion: (text: string) => void;
+  onDelete: (id: string) => void;
 }) {
   const groups = groupByDate(conversations);
 
@@ -141,6 +146,7 @@ function SidebarContent({
                   conv={conv}
                   isActive={activeId === conv.id}
                   onSelect={onSelect}
+                  onDelete={onDelete}
                 />
               ))}
             </div>
@@ -167,12 +173,15 @@ function SidebarContent({
   );
 }
 
-function ConversationItem({ conv, isActive, onSelect }: { conv: ConversationMeta; isActive: boolean; onSelect: (id: string) => void }) {
+function ConversationItem({ conv, isActive, onSelect, onDelete }: { conv: ConversationMeta; isActive: boolean; onSelect: (id: string) => void; onDelete: (id: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(conv.title);
+  const [menuOpen, setMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  const handleDoubleClick = () => {
+  const handleStartRename = () => {
+    setMenuOpen(false);
     setEditing(true);
     setTimeout(() => inputRef.current?.select(), 50);
   };
@@ -186,7 +195,7 @@ function ConversationItem({ conv, isActive, onSelect }: { conv: ConversationMeta
     }
     try {
       await api.renameConversation(conv.id, newTitle);
-      conv.title = newTitle; // Update in-place
+      conv.title = newTitle;
     } catch {
       setTitle(conv.title);
       toast.error('Failed to rename');
@@ -198,32 +207,86 @@ function ConversationItem({ conv, isActive, onSelect }: { conv: ConversationMeta
     if (e.key === 'Escape') { setTitle(conv.title); setEditing(false); }
   };
 
+  const handleDelete = async () => {
+    setMenuOpen(false);
+    try {
+      await api.deleteConversation(conv.id);
+      onDelete(conv.id);
+      toast.success('Conversation deleted');
+    } catch {
+      toast.error('Failed to delete');
+    }
+  };
+
   return (
-    <button
-      onClick={() => !editing && onSelect(conv.id)}
-      onDoubleClick={handleDoubleClick}
-      className={cn(
-        'w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors mb-0.5',
-        isActive
-          ? 'bg-cyan-500/10 text-cyan-200 border border-cyan-500/20'
-          : 'text-muted-foreground hover:bg-white/5 border border-transparent'
+    <div className="relative group">
+      <button
+        onClick={() => !editing && onSelect(conv.id)}
+        className={cn(
+          'w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors mb-0.5',
+          isActive
+            ? 'bg-cyan-500/10 text-cyan-200 border border-cyan-500/20'
+            : 'text-muted-foreground hover:bg-white/5 border border-transparent'
+        )}
+      >
+        <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={handleKeyDown}
+            className="flex-1 bg-transparent border-b border-cyan-500/50 outline-none text-sm text-cyan-200 px-0"
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="truncate flex-1">{title}</span>
+        )}
+      </button>
+
+      {/* Three-dot menu button */}
+      {!editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+          className={cn(
+            'absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md transition-all',
+            menuOpen
+              ? 'bg-white/10 text-cyan-300'
+              : 'opacity-0 group-hover:opacity-100 text-muted-foreground/50 hover:text-cyan-300 hover:bg-white/10'
+          )}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
       )}
-    >
-      <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={handleSave}
-          onKeyDown={handleKeyDown}
-          className="flex-1 bg-transparent border-b border-cyan-500/50 outline-none text-sm text-cyan-200 px-0"
-          autoFocus
-        />
-      ) : (
-        <span className="truncate" title="Double-click to rename">{title}</span>
+
+      {/* Dropdown menu */}
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+          <div
+            ref={menuRef}
+            className="absolute right-0 top-full z-50 mt-1 w-36 rounded-lg border border-white/10 bg-[#1A1F2E] shadow-xl py-1"
+          >
+            <button
+              onClick={handleStartRename}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:text-cyan-300 hover:bg-white/5 transition-colors"
+            >
+              <Pencil className="h-3 w-3" />
+              Rename
+            </button>
+            <button
+              onClick={handleDelete}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+            >
+              <Trash2 className="h-3 w-3" />
+              Delete
+            </button>
+          </div>
+        </>
       )}
-    </button>
+    </div>
   );
 }
 

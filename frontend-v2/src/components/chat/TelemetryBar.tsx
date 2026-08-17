@@ -1,4 +1,4 @@
-import { BookOpen, Wrench, Tag, Cpu, Route } from 'lucide-react';
+import { BookOpen, Wrench, Tag, Cpu, Route, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ChatTelemetry } from '@/services/api';
 
@@ -19,6 +19,14 @@ export default function TelemetryBar({ telemetry }: { telemetry: ChatTelemetry }
         <Icon className="h-3 w-3" />
         <span className="font-semibold">{cfg.label}</span>
       </div>
+
+      {/* Cache hit indicator */}
+      {telemetry.cacheHit && (
+        <div className="flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-2 py-1 text-purple-300">
+          <Zap className="h-3 w-3" />
+          <span className="font-semibold">Cached</span>
+        </div>
+      )}
 
       {/* Confidence */}
       <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-[#0B0F19]/60 px-2 py-1 text-muted-foreground">

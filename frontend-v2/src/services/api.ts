@@ -19,6 +19,7 @@ export interface ChatTelemetry {
   confidence: number;
   route: string;
   iterations: number;
+  cacheHit?: boolean;
 }
 
 export interface ChatResponse {
@@ -29,6 +30,8 @@ export interface ChatResponse {
     confidence?: number;
     route?: string;
     iteration_count?: number;
+    cache_hit?: boolean;
+    cache_score?: number;
   };
 }
 
@@ -36,6 +39,29 @@ export interface KnowledgeDocument {
   source: string;
   drone_model: string;
   chunk_count: number;
+}
+
+export interface FeedbackItem {
+  conversation_id: string;
+  message_index: number;
+  rating: number;
+  comment: string | null;
+  user_id: string;
+  created_at: string;
+  flagged_message?: string;
+  user_query?: string;
+  total_messages?: number;
+  conversation_title?: string;
+}
+
+export interface FeedbackResponse {
+  feedback: FeedbackItem[];
+  stats: {
+    total: number;
+    positive: number;
+    negative: number;
+    satisfaction_rate: number;
+  };
 }
 
 const AUTH_KEY = 'dji_auth';
@@ -80,6 +106,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     clearAuth();
     onUnauthorized?.();
     throw new Error('Unauthorized');
+  }
+
+  if (res.status === 429) {
+    let retryAfter = res.headers.get('Retry-After') || '60';
+    let detail = `Rate limit exceeded. Please wait ${retryAfter} seconds before trying again.`;
+    try {
+      const body = await res.json();
+      detail = body.detail || detail;
+    } catch {
+      /* ignore parse error */
+    }
+    const err = new Error(detail);
+    (err as any).status = 429;
+    (err as any).retryAfter = parseInt(retryAfter, 10);
+    throw err;
   }
 
   if (!res.ok) {
@@ -145,6 +186,12 @@ export const api = {
     });
   },
 
+  deleteConversation(conversationId: string) {
+    return request<{ status: string }>(`/api/v1/conversations/${conversationId}`, {
+      method: 'DELETE',
+    });
+  },
+
   ingest(pdfBase64: string, droneModel: string, sourceName: string) {
     return request<{ status: string; result?: any; message?: string }>('/api/v1/admin/ingest', {
       method: 'POST',
@@ -198,6 +245,25 @@ export const api = {
       intent: string;
       metadata: any;
     }>;
+  },
+
+  submitFeedback(conversationId: string, messageIndex: number, rating: 1 | -1, comment?: string) {
+    return request<{ status: string; rating: number }>('/api/v1/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        message_index: messageIndex,
+        rating,
+        comment,
+      }),
+    });
+  },
+
+  getAdminFeedback(rating?: number, limit: number = 50) {
+    const params = new URLSearchParams();
+    if (rating !== undefined) params.set('rating', String(rating));
+    params.set('limit', String(limit));
+    return request<FeedbackResponse>(`/api/v1/admin/feedback?${params.toString()}`);
   },
 };
 

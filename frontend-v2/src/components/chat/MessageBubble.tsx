@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Hexagon, User as UserIcon, Volume2 } from 'lucide-react';
+import { Hexagon, User as UserIcon, Volume2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ChatMessage } from '@/services/api';
+import { api, type ChatMessage } from '@/services/api';
+import { toast } from 'sonner';
 import MarkdownRenderer from './MarkdownRenderer';
 import TelemetryBar from './TelemetryBar';
 
@@ -20,8 +22,37 @@ function speakText(text: string) {
   speechSynthesis.speak(utterance);
 }
 
-export default function MessageBubble({ message }: { message: ChatMessage }) {
+interface MessageBubbleProps {
+  message: ChatMessage;
+  conversationId?: string | null;
+  messageIndex?: number;
+}
+
+export default function MessageBubble({ message, conversationId, messageIndex }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [feedback, setFeedback] = useState<1 | -1 | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleFeedback = async (rating: 1 | -1) => {
+    if (!conversationId || messageIndex === undefined || submitting) return;
+
+    // Toggle off if same rating clicked again
+    if (feedback === rating) {
+      setFeedback(null);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await api.submitFeedback(conversationId, messageIndex, rating);
+      setFeedback(rating);
+      toast.success(rating === 1 ? 'Thanks for the feedback!' : 'Sorry about that. We\'ll improve.');
+    } catch {
+      toast.error('Failed to submit feedback');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <motion.div
@@ -58,17 +89,54 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
             <MarkdownRenderer content={message.content} />
           )}
         </div>
-        {/* TTS speaker button for assistant messages */}
+
+        {/* Action bar for assistant messages */}
         {!isUser && message.content && (
-          <button
-            onClick={() => speakText(message.content)}
-            className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-cyan-400 transition-colors"
-            title="Read aloud"
-          >
-            <Volume2 className="h-3 w-3" />
-            <span>Listen</span>
-          </button>
+          <div className="mt-1.5 flex items-center gap-3">
+            {/* TTS */}
+            <button
+              onClick={() => speakText(message.content)}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-cyan-400 transition-colors"
+              title="Read aloud"
+            >
+              <Volume2 className="h-3 w-3" />
+              <span>Listen</span>
+            </button>
+
+            {/* Feedback buttons */}
+            {conversationId && messageIndex !== undefined && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => handleFeedback(1)}
+                  disabled={submitting}
+                  className={cn(
+                    'flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] transition-all',
+                    feedback === 1
+                      ? 'bg-green-500/20 text-green-400 border border-green-500/40'
+                      : 'text-muted-foreground/40 hover:text-green-400 hover:bg-green-500/10'
+                  )}
+                  title="Good response"
+                >
+                  <ThumbsUp className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={() => handleFeedback(-1)}
+                  disabled={submitting}
+                  className={cn(
+                    'flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] transition-all',
+                    feedback === -1
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                      : 'text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10'
+                  )}
+                  title="Poor response"
+                >
+                  <ThumbsDown className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+          </div>
         )}
+
         {message.telemetry && <TelemetryBar telemetry={message.telemetry} />}
       </div>
     </motion.div>

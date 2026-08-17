@@ -16,9 +16,14 @@ from typing import Dict, Any, List
 import httpx
 from openai import OpenAI
 
+from middleware.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+
 logger = logging.getLogger(__name__)
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8002")
+
+# Circuit breaker for MCP server calls (shared across RAG + Diagnostic agents)
+mcp_circuit_breaker = CircuitBreaker("mcp-server", failure_threshold=3, recovery_timeout=30)
 
 PLANNER_PROMPT = """You are a search planner for a DJI drone manual RAG system.
 Given the user's query, plan the retrieval strategy.
@@ -131,27 +136,33 @@ class RAGAgent:
             return [{"query": query, "drone_model": None, "top_k": 4}]
 
     def _search_mcp(self, query: str, drone_model: str = None, top_k: int = 4) -> List[Dict[str, Any]]:
-        """Execute a single MCP search call."""
+        """Execute a single MCP search call (protected by circuit breaker)."""
         arguments = {"query": query, "top_k": top_k}
         if drone_model:
             arguments["drone_model"] = drone_model
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(
-                    f"{self.mcp_url}/api/v1/call_tool",
-                    json={
-                        "tool_name": "query_dji_manual_vector_db",
-                        "arguments": arguments,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            def _do_search():
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(
+                        f"{self.mcp_url}/api/v1/call_tool",
+                        json={
+                            "tool_name": "query_dji_manual_vector_db",
+                            "arguments": arguments,
+                        },
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+
+            data = mcp_circuit_breaker.call(_do_search)
 
             if data.get("status") == "success":
                 return data["output"]
             return []
 
+        except CircuitBreakerOpen as e:
+            logger.warning(f"RAG search blocked: {e}")
+            return []
         except Exception as e:
             logger.error(f"MCP search error: {e}")
             return []

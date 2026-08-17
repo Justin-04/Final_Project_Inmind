@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Send, Loader2, Mic, MicOff } from 'lucide-react';
+import { Send, Loader2, Mic, MicOff, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { api, type ChatMessage, type ChatTelemetry } from '@/services/api';
 import { toast } from 'sonner';
@@ -55,6 +55,7 @@ export default function ChatPage() {
   const wasVoiceInputRef = useRef(false);
   const MAX_RECORDING_MS = 30000; // 30 seconds max
   const [collapsed, setCollapsed] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -82,6 +83,22 @@ export default function ChatPage() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, loading]);
+
+  // Detect if user scrolled up
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      setShowScrollBtn(!isNearBottom);
+    };
+    el.addEventListener('scroll', handleScroll);
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToBottom = () => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -146,6 +163,7 @@ export default function ChatPage() {
             confidence: res.metadata?.confidence ?? 0.9,
             route: res.metadata?.route ?? '',
             iterations: res.metadata?.iteration_count ?? 1,
+            cacheHit: res.metadata?.cache_hit ?? false,
           }
         : undefined;
 
@@ -158,11 +176,18 @@ export default function ChatPage() {
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Chat request failed');
+      const isRateLimit = (err as any)?.status === 429;
+      if (isRateLimit) {
+        toast.warning(err instanceof Error ? err.message : 'Rate limit exceeded. Please wait before sending another message.');
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Chat request failed');
+      }
       const errMsg: ChatMessage = {
         id: genId(),
         role: 'assistant',
-        content: 'I encountered an error processing your request. Please try again.',
+        content: isRateLimit
+          ? 'You are sending messages too quickly. Please wait a moment before trying again.'
+          : 'I encountered an error processing your request. Please try again.',
         createdAt: Date.now(),
       };
       setMessages((prev) => [...prev, errMsg]);
@@ -271,12 +296,19 @@ export default function ChatPage() {
         onSelect={handleSelectConversation}
         onNew={handleNewSession}
         onSuggestion={(t) => handleSend(t)}
+        onDelete={(id) => {
+          setConversations((prev) => prev.filter((c) => c.id !== id));
+          if (activeId === id) {
+            setActiveId(null);
+            setMessages([]);
+          }
+        }}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
       />
 
       {/* Chat window */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative">
         {/* Messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
@@ -291,12 +323,22 @@ export default function ChatPage() {
                 </p>
               </div>
             )}
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+            {messages.map((msg, idx) => (
+              <MessageBubble key={msg.id} message={msg} conversationId={activeId} messageIndex={idx} />
             ))}
             {loading && <ThinkingIndicator />}
           </div>
         </div>
+
+        {/* Scroll to bottom button */}
+        {showScrollBtn && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-24 right-6 flex h-9 w-9 items-center justify-center rounded-full bg-[#1F2937] border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 transition-all shadow-lg z-10"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        )}
 
         {/* Input bar */}
         <div className="border-t border-cyan-500/10 glass-strong">

@@ -21,6 +21,7 @@ const suggestions = [
   'How do I recalibrate the Mavic 3 Pro IMU?',
   'Matrice 350 RTK battery specs',
   'Compare Mini 4 Pro vs Air 3 pricing',
+  'DJI air 3 prices'
 ];
 
 interface SidebarProps {

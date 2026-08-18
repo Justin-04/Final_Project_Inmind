@@ -25,7 +25,8 @@ class AgentState(TypedDict):
     # --- Supervisor ---
     iteration_count: int
     max_iterations: int
-    route: str  # Which agent to call next
+    route: str  # Primary route (first in routes list)
+    routes: List[str]  # All routes to execute (multi-route support)
 
     # --- Agent Results ---
     rag_result: Optional[Dict[str, Any]]

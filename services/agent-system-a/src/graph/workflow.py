@@ -2,7 +2,9 @@
 LangGraph Workflow for agent-system-a.
 
 Full pipeline:
-  input_guard → classifier → supervisor → [rag/diagnostic/pricing] → summarizer → END
+  input_guard → classifier → supervisor → [multi_router] → summarizer → END
+
+Multi-router supports calling multiple specialist agents for queries that span domains.
 """
 
 import logging
@@ -29,11 +31,39 @@ def route_after_guard(state: AgentState) -> str:
 
 
 def route_after_supervisor(state: AgentState) -> str:
-    """Route to the correct specialist agent."""
-    route = state.get("route", "rag_agent")
-    if route == "summarizer":
+    """Route based on supervisor decision."""
+    routes = state.get("routes", [state.get("route", "rag_agent")])
+
+    # If only one route and it's summarizer (general query), go directly
+    if routes == ["summarizer"]:
         return "summarizer"
-    return route
+
+    # Otherwise go through multi_router
+    return "multi_router"
+
+
+def multi_router_node(state: AgentState) -> dict:
+    """
+    Execute all agents in the routes list sequentially.
+    This enables multi-domain queries (e.g., specs + error code).
+    """
+    routes = state.get("routes", [state.get("route", "rag_agent")])
+    results = {}
+
+    print(f"\n  [Multi-Router] Executing {len(routes)} agent(s): {routes}")
+
+    for route in routes:
+        if route == "rag_agent":
+            result = rag_agent_node(state)
+            results.update(result)
+        elif route == "diagnostic_agent":
+            result = diagnostic_agent_node(state)
+            results.update(result)
+        elif route == "pricing_agent":
+            result = pricing_agent_node(state)
+            results.update(result)
+
+    return results
 
 
 def build_graph():
@@ -51,20 +81,16 @@ def build_graph():
     ┌──────▼───────┐
     │  supervisor   │
     └──────┬───────┘
-           │ (route)
-      ┌────┼────────────┐
-      │    │            │
-    ┌─▼──┐ ┌▼────────┐ ┌▼────────┐
-    │RAG │ │Diagnostic│ │Pricing  │
-    └─┬──┘ └┬────────┘ └┬────────┘
-      │     │           │
-      └─────┼───────────┘
-            │
-     ┌──────▼───────┐
-     │  summarizer   │
-     └──────┬───────┘
-            │
-           END
+           │ (routes)
+    ┌──────▼───────┐
+    │ multi_router  │  ← calls 1+ agents based on routes list
+    └──────┬───────┘
+           │
+    ┌──────▼───────┐
+    │  summarizer   │
+    └──────┬───────┘
+           │
+          END
     """
     graph = StateGraph(AgentState)
 
@@ -72,14 +98,12 @@ def build_graph():
     graph.add_node("input_guard", input_guard_node)
     graph.add_node("classifier", classifier_node)
     graph.add_node("supervisor", supervisor_node)
-    graph.add_node("rag_agent", rag_agent_node)
-    graph.add_node("diagnostic_agent", diagnostic_agent_node)
-    graph.add_node("pricing_agent", pricing_agent_node)
+    graph.add_node("multi_router", multi_router_node)
     graph.add_node("summarizer", summarizer_node)
 
     # Blocked node — returns the guardrail message
     def blocked_node(state: AgentState):
-        return {"final_response": f"⚠️ Your query was blocked: {state.get('guardrail_message', 'Policy violation detected.')}"}
+        return {"final_response": "Your query was blocked: " + (state.get('guardrail_message') or 'Policy violation detected.')}
 
     graph.add_node("blocked", blocked_node)
 
@@ -99,17 +123,13 @@ def build_graph():
         "supervisor",
         route_after_supervisor,
         {
-            "rag_agent": "rag_agent",
-            "diagnostic_agent": "diagnostic_agent",
-            "pricing_agent": "pricing_agent",
+            "multi_router": "multi_router",
             "summarizer": "summarizer",
         },
     )
 
-    # All specialists → summarizer
-    graph.add_edge("rag_agent", "summarizer")
-    graph.add_edge("diagnostic_agent", "summarizer")
-    graph.add_edge("pricing_agent", "summarizer")
+    # Multi-router → summarizer
+    graph.add_edge("multi_router", "summarizer")
 
     # Terminals
     graph.add_edge("summarizer", END)
@@ -117,5 +137,5 @@ def build_graph():
 
     # --- Compile ---
     compiled = graph.compile()
-    logger.info("agent-system-a LangGraph compiled ✓")
+    logger.info("agent-system-a LangGraph compiled (multi-route enabled)")
     return compiled

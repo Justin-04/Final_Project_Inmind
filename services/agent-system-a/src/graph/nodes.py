@@ -56,26 +56,48 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     """
     LLM-powered routing decision.
     If BERT is confident (>0.85), trust it and skip LLM call.
-    Otherwise, use LLM supervisor for complex routing.
+    Otherwise, use LLM supervisor for complex routing (supports multi-route).
+
+    Special case: if query contains an error code pattern AND other content,
+    force multi-route through LLM supervisor regardless of BERT confidence.
     """
+    import re
     intent = state.get("intent", "")
     confidence = state.get("confidence", 0.0)
+    query = state.get("query", "")
+
+    # Detect if query contains error code pattern (E001, E003, etc.)
+    has_error_code = bool(re.search(r'\bE\d{3}\b', query, re.IGNORECASE))
+    # Detect if query also has non-diagnostic content (multi-domain)
+    query_words = len(query.split())
+    is_multi_domain = has_error_code and query_words > 5 and intent != "diagnostic"
+
+    # If multi-domain detected, skip BERT and let LLM supervisor decide routes
+    if is_multi_domain:
+        print(f"\n  [Supervisor] Multi-domain detected (error code + other content) -> LLM deciding routes...")
+        result = _supervisor.route(
+            query=query,
+            conversation_history=state.get("conversation_history", []),
+            iteration_count=state.get("iteration_count", 0),
+        )
+        print(f"   Routes: {result.get('routes', [result.get('route')])}")
+        return result
 
     # Fast path: BERT is confident → route directly (skip LLM call)
     if confidence >= 0.85:
         route_map = {"rag": "rag_agent", "diagnostic": "diagnostic_agent", "pricing": "pricing_agent"}
         route = route_map.get(intent, "rag_agent")
         print(f"\n  [Supervisor] BERT confident ({confidence:.2f}) -> fast routing to {route}")
-        return {"route": route, "iteration_count": state.get("iteration_count", 0) + 1}
+        return {"route": route, "routes": [route], "iteration_count": state.get("iteration_count", 0) + 1}
 
-    # Slow path: BERT unsure → LLM decides (handles general/greeting queries too)
+    # Slow path: BERT unsure → LLM decides (handles general/greeting queries + multi-route)
     print(f"\n  [Supervisor] BERT unsure ({confidence:.2f}) -> LLM deciding route...")
     result = _supervisor.route(
-        query=state["query"],
+        query=query,
         conversation_history=state.get("conversation_history", []),
         iteration_count=state.get("iteration_count", 0),
     )
-    print(f"   Route: {result['route']}")
+    print(f"   Routes: {result.get('routes', [result.get('route')])}")
     return result
 
 

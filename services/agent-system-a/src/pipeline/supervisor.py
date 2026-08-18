@@ -1,7 +1,8 @@
 """
 Supervisor — LLM-powered central orchestrator.
 
-Uses gpt-4o-mini to analyze the query and decide which specialist agent to route to.
+Uses gpt-4o-mini to analyze the query and decide which specialist agent(s) to route to.
+Supports multi-route for queries spanning multiple domains.
 Enforces max 5 iterations.
 """
 
@@ -15,7 +16,7 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a routing supervisor for a DJI drone support system. 
-Analyze the user's query and decide which specialist agent should handle it.
+Analyze the user's query and decide which specialist agent(s) should handle it.
 
 Available agents:
 - "rag_agent": For technical questions about drone specs, features, how-to guides, manual content, comparisons between drones
@@ -24,16 +25,24 @@ Available agents:
 - "general": For greetings, thank you messages, chitchat, "who are you", or anything that is NOT a DJI drone question
 
 RULES:
-- If the query is a greeting (hello, hi, hey), thanks, or general chitchat → "general"
-- If the query asks about you/the system (who are you, what can you do) → "general"
+- If the query is a greeting (hello, hi, hey), thanks, or general chitchat → ["general"]
+- If the query asks about you/the system (who are you, what can you do) → ["general"]
+- If the query spans MULTIPLE domains (e.g. "what is the weight AND error code E001"), return MULTIPLE routes
+- For single-domain questions, return a single route in the array
 - Only use rag/diagnostic/pricing for actual DJI drone questions
 
 Respond with ONLY a JSON object:
-{"route": "rag_agent" | "diagnostic_agent" | "pricing_agent" | "general", "reasoning": "one sentence why"}"""
+{"routes": ["rag_agent", "diagnostic_agent"] | ["pricing_agent"] | ["general"], "reasoning": "one sentence why"}
+
+Examples:
+- "What is the max speed?" → {"routes": ["rag_agent"], "reasoning": "specs question"}
+- "What is the weight and error code E001?" → {"routes": ["rag_agent", "diagnostic_agent"], "reasoning": "specs + error code"}
+- "Compare prices and specs of Air 3" → {"routes": ["rag_agent", "pricing_agent"], "reasoning": "specs + pricing"}
+- "Hello" → {"routes": ["general"], "reasoning": "greeting"}"""
 
 
 class Supervisor:
-    """LLM-powered routing supervisor."""
+    """LLM-powered routing supervisor with multi-route support."""
 
     def __init__(self, max_iterations: int = 5):
         self.max_iterations = max_iterations
@@ -41,19 +50,16 @@ class Supervisor:
 
     def route(self, query: str, conversation_history: list, iteration_count: int) -> Dict[str, Any]:
         """
-        Use LLM to decide which agent should handle this query.
-
-        Args:
-            query: User's question.
-            conversation_history: Recent messages for context.
-            iteration_count: Current iteration.
+        Use LLM to decide which agent(s) should handle this query.
 
         Returns:
-            {"route": str, "iteration_count": int}
+            {"route": str, "routes": list, "iteration_count": int}
+            - "route" is the primary route (first in list) for backward compat
+            - "routes" is the full list of agents to call
         """
         if iteration_count >= self.max_iterations:
             logger.warning(f"Max iterations ({self.max_iterations}) reached")
-            return {"route": "summarizer", "iteration_count": iteration_count + 1}
+            return {"route": "summarizer", "routes": ["summarizer"], "iteration_count": iteration_count + 1}
 
         # Build context from history
         history_text = ""
@@ -70,26 +76,33 @@ class Supervisor:
                     {"role": "user", "content": f"Conversation context:\n{history_text}\n\nCurrent query: {query}"},
                 ],
                 temperature=0.0,
-                max_tokens=80,
+                max_tokens=100,
             )
 
             text = response.choices[0].message.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(text)
-            route = result.get("route", "rag_agent")
+
+            # Support both "routes" (new) and "route" (old format)
+            routes = result.get("routes", [result.get("route", "rag_agent")])
+            if isinstance(routes, str):
+                routes = [routes]
+
             reasoning = result.get("reasoning", "")
 
-            # Validate route
+            # Validate routes
             valid_routes = ["rag_agent", "diagnostic_agent", "pricing_agent", "general"]
-            if route not in valid_routes:
-                route = "rag_agent"
+            routes = [r for r in routes if r in valid_routes] or ["rag_agent"]
 
-            # "general" maps to "summarizer" in the graph (skip specialists)
-            if route == "general":
-                route = "summarizer"
+            # "general" maps to "summarizer"
+            routes = ["summarizer" if r == "general" else r for r in routes]
 
-            logger.info(f"Supervisor: {route} — {reasoning}")
-            return {"route": route, "iteration_count": iteration_count + 1}
+            primary_route = routes[0]
+
+            logger.info(f"Supervisor: {routes} — {reasoning}")
+            return {"route": primary_route, "routes": routes, "iteration_count": iteration_count + 1}
 
         except Exception as e:
             logger.warning(f"Supervisor LLM error: {e} — defaulting to rag_agent")
-            return {"route": "rag_agent", "iteration_count": iteration_count + 1}
+            return {"route": "rag_agent", "routes": ["rag_agent"], "iteration_count": iteration_count + 1}

@@ -1,23 +1,19 @@
+version: "3.3"
+
 services:
-  # ─────────────────────────────────────────────────────────────────────
-  # Frontend (React + Vite)
-  # ─────────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend-v2
       dockerfile: Dockerfile
     container_name: frontend
     ports:
-      - "3000:3000"
+      - "80:3000"
     depends_on:
       - agent-system-a
     networks:
       - frontend-net
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Agent System A (LangGraph Orchestrator)
-  # ─────────────────────────────────────────────────────────────────────
   agent-system-a:
     build:
       context: .
@@ -45,45 +41,35 @@ services:
       - backend-net
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Agent System B (Pricing ReAct Agent)
-  # ─────────────────────────────────────────────────────────────────────
   agent-system-b:
     build:
       context: ./services/agent-system-b
       dockerfile: Dockerfile
     container_name: agent-system-b
-    ports:
-      - "8001:8001"
     environment:
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - AGENT_B_MODEL=${AGENT_B_MODEL:-gpt-4o-mini}
-      - SERPAPI_KEY=${SERPAPI_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+      - AGENT_B_MODEL=${AGENT_B_MODEL}
+      - SERPAPI_KEY=${SERPAPI_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL}
     networks:
       - backend-net
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # MCP Server (RAG Tools + Error Codes + Ingestion)
-  # ─────────────────────────────────────────────────────────────────────
   mcp-server:
     build:
       context: ./services/mcp-server
       dockerfile: Dockerfile
     container_name: mcp-server
-    ports:
-      - "8002:8002"
     environment:
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION:-eu-north-1}
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-final-project-inmind}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       - QDRANT_URL=http://vector-db:6333
       - REDIS_URL=redis://redis-cache:6379
     depends_on:
@@ -93,61 +79,39 @@ services:
       - backend-net
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Infrastructure: Qdrant (Vector DB)
-  # ─────────────────────────────────────────────────────────────────────
   vector-db:
     image: qdrant/qdrant:latest
     container_name: vector-db
-    ports:
-      - "6333:6333"
     volumes:
       - qdrant-storage:/qdrant/storage
     networks:
       - backend-net
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Infrastructure: Redis (Caching + Rate Limiting)
-  # ─────────────────────────────────────────────────────────────────────
   redis:
     image: redis/redis-stack:latest
     container_name: redis-cache
-    ports:
-      - "6380:6379"
-      - "8083:8001"
     volumes:
       - redis-storage:/data
     networks:
       - backend-net
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Infrastructure: MongoDB (Conversations + Users + Feedback)
-  # ─────────────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:7.0
     container_name: mongodb
-    ports:
-      - "27017:27017"
     volumes:
       - mongo-storage:/data/db
     networks:
       - backend-net
     restart: unless-stopped
 
-# ─────────────────────────────────────────────────────────────────────
-# Networks
-# ─────────────────────────────────────────────────────────────────────
 networks:
   frontend-net:
     driver: bridge
   backend-net:
     driver: bridge
 
-# ─────────────────────────────────────────────────────────────────────
-# Volumes
-# ─────────────────────────────────────────────────────────────────────
 volumes:
   qdrant-storage:
     driver: local

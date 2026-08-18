@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY services/agent-system-a/ .
 
 # Copy BERT intent classifier model
-COPY models/bert_intent_classifier/ /app/models/bert_intent_classifier/
+COPY models/bert_intent_classifier/model/ /app/models/bert_intent_classifier/model/
 
 EXPOSE 8000
 

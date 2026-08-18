@@ -15,7 +15,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ — removed: was blocking frontend-v2/src/lib/
 lib64/
 parts/
 sdist/
@@ -27,6 +27,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+/model
 
 # Virtual Environments
 venv/

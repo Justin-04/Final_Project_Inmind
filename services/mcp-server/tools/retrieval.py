@@ -202,46 +202,66 @@ def build_bm25_index():
     """Build BM25 index over child chunk texts."""
     print("Building BM25 index from parent-child collection...")
 
-    all_docs = []
-    offset = None
+    try:
+        # Create collection if it doesn't exist
+        if not qdrant.collection_exists(COLLECTION_NAME):
+            print(f"  Collection '{COLLECTION_NAME}' not found — creating empty collection")
+            from qdrant_client.models import VectorParams, Distance
+            qdrant.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=1536, distance=Distance.COSINE),
+            )
+            print("  Empty collection created. Ingest documents via admin panel.")
+            return BM25Okapi([["empty"]]), []
 
-    while True:
-        results = qdrant.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=100,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
+        all_docs = []
+        offset = None
 
-        points, next_offset = results
+        while True:
+            results = qdrant.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
 
-        for point in points:
-            all_docs.append({
-                "id": point.id,
-                "text": point.payload.get("text", ""),
-                "parent_text": point.payload.get("parent_text", ""),
-                "parent_id": point.payload.get("parent_id", ""),
-                "metadata": {
-                    "source": point.payload.get("source", ""),
-                    "page": point.payload.get("page", 0),
-                    "drone_model": point.payload.get("drone_model", ""),
-                    "modality": point.payload.get("modality", ""),
-                    "topic": point.payload.get("topic", ""),
-                    "has_image_caption": point.payload.get("has_image_caption", False),
-                    "image_paths": point.payload.get("image_paths", []),
-                },
-            })
+            points, next_offset = results
 
-        if next_offset is None:
-            break
-        offset = next_offset
+            for point in points:
+                all_docs.append({
+                    "id": point.id,
+                    "text": point.payload.get("text", ""),
+                    "parent_text": point.payload.get("parent_text", ""),
+                    "parent_id": point.payload.get("parent_id", ""),
+                    "metadata": {
+                        "source": point.payload.get("source", ""),
+                        "page": point.payload.get("page", 0),
+                        "drone_model": point.payload.get("drone_model", ""),
+                        "modality": point.payload.get("modality", ""),
+                        "topic": point.payload.get("topic", ""),
+                        "has_image_caption": point.payload.get("has_image_caption", False),
+                        "image_paths": point.payload.get("image_paths", []),
+                    },
+                })
 
-    tokenized_corpus = [tokenize(doc["text"]) for doc in all_docs]
-    bm25 = BM25Okapi(tokenized_corpus)
+            if next_offset is None:
+                break
+            offset = next_offset
 
-    print(f"BM25 index built: {len(all_docs)} child documents")
-    return bm25, all_docs
+        if not all_docs:
+            print("  Collection exists but is empty. BM25 index will be empty.")
+            return BM25Okapi([["empty"]]), []
+
+        tokenized_corpus = [tokenize(doc["text"]) for doc in all_docs]
+        bm25 = BM25Okapi(tokenized_corpus)
+
+        print(f"BM25 index built: {len(all_docs)} child documents")
+        return bm25, all_docs
+
+    except Exception as e:
+        print(f"  BM25 index build failed: {e} — starting with empty index")
+        return BM25Okapi([["empty"]]), []
 
 
 def tokenize(text: str) -> list[str]:

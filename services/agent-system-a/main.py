@@ -585,7 +585,7 @@ async def admin_list_documents(user: dict = Depends(require_admin)):
     MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8002")
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{MCP_SERVER_URL}/api/v1/call_tool",
                 json={"tool_name": "list_documents", "arguments": {}},
@@ -617,7 +617,7 @@ async def admin_delete_document(source_name: str, user: dict = Depends(require_a
     MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8002")
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{MCP_SERVER_URL}/api/v1/call_tool",
                 json={

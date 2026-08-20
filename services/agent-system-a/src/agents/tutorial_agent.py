@@ -46,7 +46,7 @@ class TutorialAgent:
 
     def __init__(self, agent_b_url: str = None):
         self.agent_b_url = agent_b_url or AGENT_B_URL
-        self.timeout = 30
+        self.timeout = 60  # Increased for slower cloud environments
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def execute(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:

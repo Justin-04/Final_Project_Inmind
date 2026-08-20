@@ -68,7 +68,7 @@ class RAGAgent:
 
     def __init__(self, mcp_url: str = None):
         self.mcp_url = mcp_url or MCP_SERVER_URL
-        self.timeout = 30
+        self.timeout = 120  # Increased for slower cloud environments
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def execute(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:

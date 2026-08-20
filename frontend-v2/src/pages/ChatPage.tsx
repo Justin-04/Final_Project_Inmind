@@ -58,6 +58,7 @@ export default function ChatPage() {
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [useBert, setUseBert] = useState(true); // Toggle for BERT classifier
 
   useEffect(() => {
     if (!auth) {
@@ -147,7 +148,7 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      const res = await api.chat(text, auth.username, activeId);
+      const res = await api.chat(text, auth.username, activeId, useBert);
 
       if (!activeId && res.conversation_id) {
         setActiveId(res.conversation_id);
@@ -343,6 +344,29 @@ export default function ChatPage() {
         {/* Input bar */}
         <div className="border-t border-cyan-500/10 glass-strong">
           <div className="max-w-3xl mx-auto px-4 py-3">
+            {/* BERT Toggle */}
+            <div className="flex items-center justify-between mb-2 px-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">BERT Classifier:</span>
+                <button
+                  onClick={() => setUseBert(!useBert)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                    useBert ? 'bg-cyan-500' : 'bg-gray-600'
+                  }`}
+                  title={useBert ? 'BERT enabled (fast routing)' : 'BERT disabled (always use LLM supervisor)'}
+                >
+                  <span
+                    className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                      useBert ? 'translate-x-5' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+                <span className="text-[10px] text-muted-foreground/70">
+                  {useBert ? 'Enabled (fast)' : 'Disabled (LLM only)'}
+                </span>
+              </div>
+            </div>
+            
             <div className="relative flex items-end gap-2 rounded-xl border border-cyan-500/20 bg-[#0B0F19]/60 p-2 focus-within:border-cyan-500/40 transition-colors">
               <Textarea
                 ref={textareaRef}

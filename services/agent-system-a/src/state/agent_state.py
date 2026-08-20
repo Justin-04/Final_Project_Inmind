@@ -13,6 +13,7 @@ class AgentState(TypedDict):
     user_id: str
     conversation_id: str
     conversation_history: List[Dict[str, str]]  # Last N messages for context
+    use_bert: bool  # Whether to use BERT classifier (false = always use LLM supervisor)
 
     # --- Intent Classification ---
     intent: str            # "rag", "diagnostic", "pricing", "general"

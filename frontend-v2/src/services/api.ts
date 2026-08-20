@@ -152,13 +152,14 @@ export const api = {
     });
   },
 
-  chat(query: string, userId: string, conversationId: string | null) {
+  chat(query: string, userId: string, conversationId: string | null, useBert: boolean = true) {
     return request<ChatResponse>('/api/v1/chat', {
       method: 'POST',
       body: JSON.stringify({
         query,
         user_id: userId,
         conversation_id: conversationId,
+        use_bert: useBert,
       }),
     });
   },

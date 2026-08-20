@@ -110,6 +110,7 @@ class ChatRequest(BaseModel):
     query: str = Field(..., description="User's question")
     user_id: str = Field(default="anonymous", description="User identifier")
     conversation_id: Optional[str] = Field(default=None, description="Existing conversation to continue")
+    use_bert: bool = Field(default=True, description="Whether to use BERT classifier (false = always use LLM supervisor)")
 
 
 class ChatResponse(BaseModel):
@@ -316,6 +317,7 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
             "user_id": request.user_id,
             "conversation_id": conversation_id,
             "conversation_history": conversation_history,
+            "use_bert": request.use_bert,  # Pass the toggle flag
             "intent": "",
             "confidence": 0.0,
             "input_safe": True,
@@ -441,6 +443,7 @@ async def chat_stream(request: ChatRequest, user: dict = Depends(get_current_use
                 "user_id": request.user_id,
                 "conversation_id": conversation_id,
                 "conversation_history": conversation_history,
+                "use_bert": request.use_bert,  # Pass the toggle flag
                 "intent": "",
                 "confidence": 0.0,
                 "input_safe": True,

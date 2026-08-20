@@ -57,7 +57,8 @@ def classifier_node(state: AgentState) -> Dict[str, Any]:
 def supervisor_node(state: AgentState) -> Dict[str, Any]:
     """
     LLM-powered routing decision.
-    If BERT is confident (>0.85), trust it and skip LLM call.
+    If use_bert=True and BERT is confident (>0.85), trust it and skip LLM call.
+    If use_bert=False, always use LLM supervisor.
     Otherwise, use LLM supervisor for complex routing (supports multi-route).
 
     Special case: if query contains an error code pattern AND other content,
@@ -67,6 +68,7 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     intent = state.get("intent", "")
     confidence = state.get("confidence", 0.0)
     query = state.get("query", "")
+    use_bert = state.get("use_bert", True)
 
     # Detect if query contains error code pattern (E001, E003, etc.)
     has_error_code = bool(re.search(r'\bE\d{3}\b', query, re.IGNORECASE))
@@ -85,15 +87,16 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
         print(f"   Routes: {result.get('routes', [result.get('route')])}")
         return result
 
-    # Fast path: BERT is confident → route directly (skip LLM call)
-    if confidence >= 0.85:
+    # Fast path: BERT enabled AND confident → route directly (skip LLM call)
+    if use_bert and confidence >= 0.85:
         route_map = {"rag": "rag_agent", "diagnostic": "diagnostic_agent", "pricing": "pricing_agent"}
         route = route_map.get(intent, "rag_agent")
         print(f"\n  [Supervisor] BERT confident ({confidence:.2f}) -> fast routing to {route}")
         return {"route": route, "routes": [route], "iteration_count": state.get("iteration_count", 0) + 1}
 
-    # Slow path: BERT unsure → LLM decides (handles general/greeting queries + multi-route)
-    print(f"\n  [Supervisor] BERT unsure ({confidence:.2f}) -> LLM deciding route...")
+    # Slow path: BERT disabled OR BERT unsure → LLM decides (handles general/greeting queries + multi-route)
+    reason = "BERT disabled by user" if not use_bert else f"BERT unsure ({confidence:.2f})"
+    print(f"\n  [Supervisor] {reason} -> LLM deciding route...")
     result = _supervisor.route(
         query=query,
         conversation_history=state.get("conversation_history", []),

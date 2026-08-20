@@ -71,9 +71,60 @@ class IntentClassifier:
             {"intent": str, "confidence": float, "method": "bert" | "keyword"}
         """
         if self.bert_available:
-            return self._classify_bert(query)
+            result = self._classify_bert(query)
+            # Post-processing: fix known BERT misclassifications
+            result = self._apply_overrides(query, result)
+            return result
         else:
             return self._classify_keywords(query, conversation_history)
+
+    def _apply_overrides(self, query: str, bert_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Override BERT predictions when strong signal words are present.
+        This fixes known edge cases (e.g., Neo queries misclassified as diagnostic).
+        """
+        text = query.lower()
+
+        # Strong RAG indicators (specs, capabilities, features)
+        strong_rag_patterns = [
+            "what is the", "how far", "how fast", "how long", "how heavy",
+            "max speed", "max range", "max altitude", "max flight time",
+            "battery life", "flight time", "transmission range",
+            "camera", "video resolution", "photo", "sensor",
+            "weight", "dimensions", "specifications", "specs",
+            "does it support", "does it have", "can it",
+        ]
+
+        # Strong pricing indicators
+        strong_pricing_patterns = [
+            "how much", "price", "cost", "buy", "purchase",
+            "where to buy", "cheapest", "deal", "discount",
+            "amazon", "best buy", "combo", "fly more",
+        ]
+
+        # Strong diagnostic indicators
+        strong_diagnostic_patterns = [
+            "error", "code e0", "not working", "won't", "failed",
+            "crash", "problem", "troubleshoot", "fix",
+            "blinking", "warning", "calibration failed",
+        ]
+
+        # Check for strong RAG patterns
+        if any(pattern in text for pattern in strong_rag_patterns):
+            # Don't override diagnostic if there's also an error indicator
+            if not any(pattern in text for pattern in strong_diagnostic_patterns):
+                return {"intent": "rag", "confidence": 0.95, "method": "bert+override"}
+
+        # Check for strong pricing patterns
+        if any(pattern in text for pattern in strong_pricing_patterns):
+            return {"intent": "pricing", "confidence": 0.95, "method": "bert+override"}
+
+        # Check for strong diagnostic patterns
+        if any(pattern in text for pattern in strong_diagnostic_patterns):
+            return {"intent": "diagnostic", "confidence": 0.95, "method": "bert+override"}
+
+        # No override needed
+        return bert_result
 
     def _classify_bert(self, query: str) -> Dict[str, Any]:
         """Classify using fine-tuned BERT."""
@@ -105,13 +156,18 @@ class IntentClassifier:
         if history:
             text += " " + " ".join(m.get("content", "").lower() for m in history[-2:])
 
-        diag_kw = ["error", "code", "e00", "led", "blink", "fail", "calibrat", "problem", "not working"]
-        price_kw = ["price", "cost", "buy", "purchase", "cheap", "store", "amazon", "combo", "deal", "how much"]
-        rag_kw = ["spec", "weight", "range", "speed", "battery", "camera", "how to", "manual", "feature", "max"]
+        # Strong indicators for each category
+        diag_kw = ["error", "code", "e00", "led", "blink", "fail", "calibrat", "problem", "not working", "crash", "won't", "warning"]
+        price_kw = ["price", "cost", "buy", "purchase", "cheap", "store", "amazon", "combo", "deal", "how much", "where to buy", "shipping"]
+        rag_kw = ["spec", "weight", "range", "speed", "battery", "camera", "how to", "manual", "feature", "max", "what is", "does", "support"]
 
         d = sum(1 for kw in diag_kw if kw in text)
         p = sum(1 for kw in price_kw if kw in text)
         r = sum(1 for kw in rag_kw if kw in text)
+
+        # Boost RAG for specification queries (common pattern)
+        if any(word in text for word in ["max", "what is", "does", "how far", "flight time", "sensor", "video", "photo", "resolution"]):
+            r += 2
 
         if d > p and d > r:
             return {"intent": "diagnostic", "confidence": 0.70, "method": "keyword"}

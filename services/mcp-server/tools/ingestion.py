@@ -31,16 +31,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 EXTRACTED_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "extracted_v2")
-COLLECTION_NAME = "dji_manuals_parent_child"
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
 
-# Parent-child size parameters
-PARENT_CHUNK_SIZE = 1500
-PARENT_CHUNK_OVERLAP = 200
-CHILD_CHUNK_SIZE = 300
-CHILD_CHUNK_OVERLAP = 50
+from tools.config import (
+    COLLECTION_NAME,
+    EMBEDDING_MODEL,
+    EMBEDDING_DIM,
+    PARENT_CHUNK_SIZE,
+    PARENT_CHUNK_OVERLAP,
+    CHILD_CHUNK_SIZE,
+    CHILD_CHUNK_OVERLAP,
+)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -255,18 +256,18 @@ def ingest_to_qdrant(children: list[dict]):
     """
     qdrant = QdrantClient(url=QDRANT_URL)
 
-    if qdrant.collection_exists(COLLECTION_NAME):
-        qdrant.delete_collection(COLLECTION_NAME)
-        print(f"  Deleted existing collection '{COLLECTION_NAME}'")
-
-    qdrant.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(
-            size=EMBEDDING_DIM,
-            distance=Distance.COSINE,
-        ),
-    )
-    print(f"  Created collection '{COLLECTION_NAME}' (dim={EMBEDDING_DIM}, cosine)")
+    # Create collection only if it doesn't exist (preserve existing documents)
+    if not qdrant.collection_exists(COLLECTION_NAME):
+        qdrant.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(
+                size=EMBEDDING_DIM,
+                distance=Distance.COSINE,
+            ),
+        )
+        print(f"  Created collection '{COLLECTION_NAME}' (dim={EMBEDDING_DIM}, cosine)")
+    else:
+        print(f"  Using existing collection '{COLLECTION_NAME}'")
 
     BATCH_SIZE = 64
     total_batches = (len(children) + BATCH_SIZE - 1) // BATCH_SIZE

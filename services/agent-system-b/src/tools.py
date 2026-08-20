@@ -10,8 +10,6 @@ import re
 import logging
 from typing import List, Dict, Any
 
-import httpx
-
 # from duckduckgo_search import DDGS  # Commented out — replaced by Google Custom Search
 
 logger = logging.getLogger(__name__)
@@ -198,7 +196,6 @@ def check_stock_and_delivery(drone_model: str) -> List[Dict[str, Any]]:
     logger.info(f"[Tool] check_stock_and_delivery: '{drone_model}'")
 
     results = []
-    ddgs = DDGS()
 
     for retailer in RETAILERS:
         entry = {
@@ -210,12 +207,12 @@ def check_stock_and_delivery(drone_model: str) -> List[Dict[str, Any]]:
 
         try:
             query = f"{drone_model} buy {retailer['name']} in stock"
-            search_results = ddgs.text(query, max_results=3)
+            search_results = search_duckduckgo(query)
 
             if search_results:
-                entry["url"] = search_results[0].get("href")
+                entry["url"] = search_results[0].get("url")
                 combined = " ".join(
-                    f"{r.get('title', '')} {r.get('body', '')}" for r in search_results
+                    f"{r.get('title', '')} {r.get('snippet', '')}" for r in search_results
                 ).lower()
 
                 # Stock detection

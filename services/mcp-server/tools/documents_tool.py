@@ -8,7 +8,6 @@ Matches the proven working logic from the old API:
 """
 
 import os
-import base64
 import logging
 from typing import List, Dict, Any
 
@@ -24,7 +23,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "dji_manuals_parent_child")
+
+from tools.config import COLLECTION_NAME
 
 # S3 config
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "final-project-inmind")
@@ -158,6 +158,7 @@ def delete_document(source_name: str) -> Dict[str, Any]:
     try:
         from tools.retrieval import rebuild_bm25_index
         rebuild_bm25_index()
+        logger.info("BM25 index rebuilt successfully after deletion")
     except Exception as e:
         logger.warning(f"BM25 rebuild after delete failed: {e}")
 
@@ -204,7 +205,7 @@ def _delete_s3_images(source_name: str) -> int:
 # UPLOAD / INGEST
 # ─────────────────────────────────────────────────────────────────────────────
 
-def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, caption_images: bool = False) -> Dict[str, Any]:
+def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, caption_images: bool = True) -> Dict[str, Any]:
     """
     Full ingestion pipeline:
     1. Save PDF to temp file
@@ -226,8 +227,7 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
 
     try:
         from tools.extraction import extract_pdf
-        from tools.ingestion import build_parent_child_chunks, get_embeddings, COLLECTION_NAME as ING_COLLECTION
-        from qdrant_client.models import VectorParams, Distance, PointStruct
+        from tools.ingestion import build_parent_child_chunks, ingest_to_qdrant
 
         # Step 1: Save bytes to temp file (extract_pdf needs a file path)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -269,43 +269,10 @@ def upload_and_ingest(file_bytes: bytes, filename: str, drone_model: str, captio
         if not children:
             return {"status": "error", "message": "No chunks created from PDF"}
 
-        # Step 4: Embed + upsert to Qdrant
+        # Step 4: Embed + upsert to Qdrant (via ingest_to_qdrant — single source of truth)
         logger.info(f"  Step 4: Embedding + upserting to Qdrant...")
-        qdrant = _get_qdrant()
-
-        # Ensure collection exists
-        if not qdrant.collection_exists(COLLECTION_NAME):
-            qdrant.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=1536, distance=Distance.COSINE),
-            )
-
-        BATCH_SIZE = 64
-        total_upserted = 0
-
-        for batch_idx in range(0, len(children), BATCH_SIZE):
-            batch = children[batch_idx:batch_idx + BATCH_SIZE]
-            texts = [child["text"] for child in batch]
-            logger.info(f"    Embedding batch {batch_idx // BATCH_SIZE + 1} ({len(batch)} chunks)...")
-            embeddings = get_embeddings(texts)
-
-            points = [
-                PointStruct(
-                    id=child["id"],
-                    vector=embedding,
-                    payload={
-                        "text": child["text"],
-                        "parent_text": child["parent_text"],
-                        "parent_id": child["parent_id"],
-                        **child["metadata"],
-                    },
-                )
-                for child, embedding in zip(batch, embeddings)
-            ]
-
-            qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
-            total_upserted += len(points)
-
+        ingest_to_qdrant(children)
+        total_upserted = len(children)
         logger.info(f"  Step 4 done: {total_upserted} chunks upserted")
         logger.info(f"Ingestion complete: '{filename}' — {len(pages)} pages, {total_upserted} chunks")
 

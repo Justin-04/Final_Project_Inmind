@@ -14,10 +14,10 @@ export default function TelemetryBar({ telemetry }: { telemetry: ChatTelemetry }
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-mono">
-      {/* Intent tag */}
+      {/* Route */}
       <div className={cn('flex items-center gap-1 rounded-md border px-2 py-1', cfg.bg, cfg.border, cfg.color)}>
         <Icon className="h-3 w-3" />
-        <span className="font-semibold">{cfg.label}</span>
+        <span className="font-semibold">{telemetry.route}</span>
       </div>
 
       {/* Cache hit indicator */}
@@ -27,24 +27,6 @@ export default function TelemetryBar({ telemetry }: { telemetry: ChatTelemetry }
           <span className="font-semibold">Cached</span>
         </div>
       )}
-
-      {/* Confidence */}
-      <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-[#0B0F19]/60 px-2 py-1 text-muted-foreground">
-        <span>Confidence</span>
-        <div className="w-16 h-1 rounded-full bg-white/10 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500"
-            style={{ width: `${telemetry.confidence}%` }}
-          />
-        </div>
-        <span className="text-cyan-300">{telemetry.confidence}%</span>
-      </div>
-
-      {/* Route */}
-      <div className="flex items-center gap-1 rounded-md border border-white/10 bg-[#0B0F19]/60 px-2 py-1 text-muted-foreground">
-        <Route className="h-3 w-3 text-cyan-400/60" />
-        <span>Route: <span className="text-cyan-300">{telemetry.route}</span> · {telemetry.iterations} iter</span>
-      </div>
     </div>
   );
 }

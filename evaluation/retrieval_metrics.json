@@ -1,0 +1,170 @@
+{
+  "mrr": 0.7083,
+  "ndcg": 0.7329,
+  "hit_at_1": 12,
+  "hit_at_k": 17,
+  "total_questions": 20,
+  "top_k": 4,
+  "per_query": [
+    {
+      "id": "eval_001",
+      "question": "What is the maximum horizontal flight speed of the DJI Mavic 3 Classic in Sport mode near sea level?",
+      "target_manual": "Mavic_3_Classic_User_Manual_v1_5_en.pdf",
+      "target_page": 84,
+      "reciprocal_rank": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "id": "eval_002",
+      "question": "What is the maximum flight time of the DJI Mavic 3 Classic?",
+      "target_manual": "Mavic_3_Classic_User_Manual_v1_5_en.pdf",
+      "target_page": 84,
+      "reciprocal_rank": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "id": "eval_003",
+      "question": "What happens when the DJI Mavic 3 Classic enters ATTI mode?",
+      "target_manual": "Mavic_3_Classic_User_Manual_v1_5_en.pdf",
+      "target_page": 17,
+      "reciprocal_rank": 0.3333,
+      "ndcg": 0.5
+    },
+    {
+      "id": "eval_004",
+      "question": "What are the two RTH settings available for Advanced RTH on the DJI Mavic 3 Classic?",
+      "target_manual": "Mavic_3_Classic_User_Manual_v1_5_en.pdf",
+      "target_page": 20,
+      "reciprocal_rank": 1.0,
+      "ndcg": 0.906
+    },
+    {
+      "id": "eval_005",
+      "question": "What is the minimum battery charge level required before performing a firmware update on the DJI Mavic 3 Classic?",
+      "target_manual": "Mavic_3_Classic_User_Manual_v1_5_en.pdf",
+      "target_page": 89,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_006",
+      "question": "What is the maximum wind speed resistance of the DJI Air 3?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 103,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_007",
+      "question": "According to the DJI Air 3 manual, what are the flight environment requirements regarding weather conditions?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 21,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_008",
+      "question": "What is the maximum horizontal speed of the DJI Air 3 in Sport mode, and what happens to obstacle sensing in this mode?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 48,
+      "reciprocal_rank": 1.0,
+      "ndcg": 0.9197
+    },
+    {
+      "id": "eval_009",
+      "question": "What are the two APAS bypass modes available on the DJI Air 3, and what is the difference?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 59,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_010",
+      "question": "What is the default setting for Emergency Propeller Stop on the DJI Mini 4 Pro, and how does it work?",
+      "target_manual": "DJI_Mini_4_Pro_User_Manual_EN.pdf",
+      "target_page": 24,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_011",
+      "question": "What is the maximum horizontal speed of the DJI Mini 4 Pro in Sport mode at sea level with no wind?",
+      "target_manual": "DJI_Mini_4_Pro_User_Manual_EN.pdf",
+      "target_page": 102,
+      "reciprocal_rank": 0.5,
+      "ndcg": 0.6309
+    },
+    {
+      "id": "eval_012",
+      "question": "What distance from buildings must be maintained during flight according to the DJI Mini 4 Pro safety guidelines?",
+      "target_manual": "DJI_Mini_4_Pro_User_Manual_EN.pdf",
+      "target_page": 19,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_013",
+      "question": "According to the DJI Mavic 3 Classic specifications table, what is the capacity and voltage of the Intelligent Flight Battery?",
+      "target_manual": "Mavic_3_Classic_User_Manual_v1_5_en.pdf",
+      "target_page": 86,
+      "reciprocal_rank": 0.5,
+      "ndcg": 0.6509
+    },
+    {
+      "id": "eval_014",
+      "question": "From the DJI Air 3 specifications table, what are the camera sensors and their effective pixel counts for both cameras?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 103,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_015",
+      "question": "According to the DJI Air 3 battery specifications table, what is the battery capacity, nominal voltage, weight, and energy of the Intelligent Flight Battery?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 106,
+      "reciprocal_rank": 0.3333,
+      "ndcg": 0.5
+    },
+    {
+      "id": "eval_016",
+      "question": "From the DJI Mini 4 Pro specifications table, what are the max flight times with the standard Intelligent Flight Battery versus the Intelligent Flight Battery Plus?",
+      "target_manual": "DJI_Mini_4_Pro_User_Manual_EN.pdf",
+      "target_page": 102,
+      "reciprocal_rank": 0.5,
+      "ndcg": 0.6309
+    },
+    {
+      "id": "eval_017",
+      "question": "Looking at the DJI RC 2 remote controller layout diagram for the DJI Air 3, what is the default function of the C1 button?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 18,
+      "reciprocal_rank": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "id": "eval_018",
+      "question": "Based on the DJI Mini 4 Pro aircraft status indicators diagram, what does a solid red LED indicate?",
+      "target_manual": "DJI_Mini_4_Pro_User_Manual_EN.pdf",
+      "target_page": 49,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "id": "eval_019",
+      "question": "From the DJI Air 3 aircraft diagram, how many components are labeled, and where is the USB-C port located (item number)?",
+      "target_manual": "DJI_Air_3_User_Manual_v1_6_EN.pdf",
+      "target_page": 16,
+      "reciprocal_rank": 1.0,
+      "ndcg": 0.9197
+    },
+    {
+      "id": "eval_020",
+      "question": "Looking at the DJI Mini 4 Pro vision system detection range diagram, what is the forward vision system precision measurement range and FOV?",
+      "target_manual": "DJI_Mini_4_Pro_User_Manual_EN.pdf",
+      "target_page": 58,
+      "reciprocal_rank": 1.0,
+      "ndcg": 1.0
+    }
+  ]
+}

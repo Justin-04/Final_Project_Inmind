@@ -19,7 +19,7 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6380")
-CACHE_SIMILARITY_THRESHOLD = 0.92
+CACHE_SIMILARITY_THRESHOLD = 0.90
 CACHE_PREFIX = "agent_response_cache:"
 EMBEDDING_MODEL = "text-embedding-3-small"
 

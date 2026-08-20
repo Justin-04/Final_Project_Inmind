@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Plus, MessageSquare, PanelLeftClose, PanelLeft, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Plus, MessageSquare, PanelLeftClose, PanelLeft, MoreHorizontal, Pencil, Trash2, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -18,10 +18,14 @@ export interface ConversationMeta {
 }
 
 const suggestions = [
-  'How do I recalibrate the Mavic 3 Pro IMU?',
-  'Matrice 350 RTK battery specs',
-  'Compare Mini 4 Pro vs Air 3 pricing',
-  'DJI air 3 prices'
+  'What is the max speed of the DJI Air 3?',
+  'Error code E001',
+  'How much is the DJI Mini 4 Pro?',
+  'Error code E001 and weight of Mini 4 Pro?',
+  'Compare flight time of Air 3 and Mini 4 Pro',
+  'How to fly the DJI Air 3?',
+  'What sensors does Air 3 have for obstacle avoidance?',
+  'Can I fly in the rain?',
 ];
 
 interface SidebarProps {
@@ -155,21 +159,40 @@ function SidebarContent({
         )}
       </div>
 
-      {/* Suggestions */}
-      <div className="border-t border-cyan-500/10 p-3 space-y-1.5">
-        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/50 mb-1">
-          Quick Suggestions
-        </div>
-        {suggestions.map((s) => (
-          <button
-            key={s}
-            onClick={() => onSuggestion(s)}
-            className="w-full text-left rounded-lg border border-white/5 bg-white/[0.02] px-2.5 py-1.5 text-xs text-muted-foreground hover:border-cyan-500/20 hover:text-cyan-300 transition-colors"
-          >
-            {s}
-          </button>
-        ))}
+      {/* Suggestions dropdown */}
+      <div className="border-t border-cyan-500/10 p-3">
+        <SuggestionsDropdown onSuggestion={onSuggestion} />
       </div>
+    </div>
+  );
+}
+
+function SuggestionsDropdown({ onSuggestion }: { onSuggestion: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs text-muted-foreground hover:border-cyan-500/20 hover:text-cyan-300 transition-colors"
+      >
+        <span className="font-mono uppercase tracking-wider text-[10px]">Demo Queries</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="mt-1 space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              onClick={() => { onSuggestion(s); setOpen(false); }}
+              className="w-full text-left rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-cyan-500/10 hover:text-cyan-300 transition-colors"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

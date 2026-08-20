@@ -10,6 +10,7 @@ from src.state.agent_state import AgentState
 from src.pipeline import InputGuard, Supervisor, OutputGuard
 from src.pipeline.classifier import IntentClassifier
 from src.agents import RAGAgent, DiagnosticAgent, PricingAgent, Summarizer
+from src.agents.tutorial_agent import TutorialAgent
 
 
 from src.pipeline.input_guard_v2 import InputGuardV2
@@ -28,6 +29,7 @@ _output_guard = OutputGuard()
 _rag_agent = RAGAgent()
 _diagnostic_agent = DiagnosticAgent()
 _pricing_agent = PricingAgent()
+_tutorial_agent = TutorialAgent()
 _summarizer = Summarizer()
 
 
@@ -119,17 +121,40 @@ def diagnostic_agent_node(state: AgentState) -> Dict[str, Any]:
 
 def pricing_agent_node(state: AgentState) -> Dict[str, Any]:
     """Call agent-system-b for vendor pricing (HTTP A2A)."""
-    print("\n💰 [Pricing Agent] Calling agent-system-b...")
+    print("\n  [Pricing Agent] Calling agent-system-b...")
     result = _pricing_agent.execute(state["query"], state.get("conversation_history", []))
     print(f"   Got {len(result.get('vendors', []))} vendors")
     return {"pricing_result": result}
 
 
+def tutorial_agent_node(state: AgentState) -> Dict[str, Any]:
+    """Call agent-system-b for YouTube tutorial search (HTTP A2A)."""
+    print("\n  [Tutorial Agent] Searching YouTube tutorials...")
+    result = _tutorial_agent.execute(state["query"], state.get("conversation_history", []))
+    print(f"   Found {len(result.get('videos', []))} videos")
+    return {"tutorial_result": result}
+
+
 def summarizer_node(state: AgentState) -> Dict[str, Any]:
     """Synthesize specialist outputs into final response."""
-    print("\n✍️  [Summarizer] Generating response...")
+    print("\n  [Summarizer] Generating response...")
+
+    # Build tutorial context if available
+    tutorial_result = state.get("tutorial_result")
+    tutorial_context = ""
+    if tutorial_result and tutorial_result.get("videos"):
+        videos = tutorial_result["videos"]
+        tutorial_context = "\n\nRelevant YouTube tutorials found:\n"
+        for i, v in enumerate(videos[:5], 1):
+            tutorial_context += f"{i}. [{v.get('title', '')}]({v.get('url', '')})"
+            if v.get("channel"):
+                tutorial_context += f" — {v['channel']}"
+            if v.get("duration"):
+                tutorial_context += f" ({v['duration']})"
+            tutorial_context += "\n"
+
     response = _summarizer.synthesize(
-        query=state["query"],
+        query=state["query"] + tutorial_context,
         conversation_history=state.get("conversation_history", []),
         rag_result=state.get("rag_result"),
         diagnostic_result=state.get("diagnostic_result"),
@@ -141,7 +166,7 @@ def summarizer_node(state: AgentState) -> Dict[str, Any]:
     final = guard_result["response"]
 
     if guard_result.get("warnings"):
-        print(f"   ⚠️ Output guard warnings: {guard_result['warnings']}")
+        print(f"   Output guard warnings: {guard_result['warnings']}")
 
-    print(f"   ✅ Response ready ({len(final)} chars)")
+    print(f"   Response ready ({len(final)} chars)")
     return {"final_response": final}

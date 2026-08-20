@@ -32,6 +32,7 @@ class AgentState(TypedDict):
     rag_result: Optional[Dict[str, Any]]
     diagnostic_result: Optional[Dict[str, Any]]
     pricing_result: Optional[Dict[str, Any]]
+    tutorial_result: Optional[Dict[str, Any]]
 
     # --- Final Output ---
     final_response: str

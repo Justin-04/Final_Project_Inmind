@@ -22,6 +22,7 @@ Available agents:
 - "rag_agent": For technical questions about drone specs, features, how-to guides, manual content, comparisons between drones
 - "diagnostic_agent": For error codes, LED patterns, calibration failures, troubleshooting hardware problems
 - "pricing_agent": For pricing, purchasing, vendor comparisons, deals, stock availability, where to buy
+- "tutorial_agent": For requests about tutorials, how-to videos, learning to fly, setup guides, YouTube content
 - "general": For greetings, thank you messages, chitchat, "who are you", or anything that is NOT a DJI drone question
 
 RULES:
@@ -92,7 +93,7 @@ class Supervisor:
             reasoning = result.get("reasoning", "")
 
             # Validate routes
-            valid_routes = ["rag_agent", "diagnostic_agent", "pricing_agent", "general"]
+            valid_routes = ["rag_agent", "diagnostic_agent", "pricing_agent", "tutorial_agent", "general"]
             routes = [r for r in routes if r in valid_routes] or ["rag_agent"]
 
             # "general" maps to "summarizer"

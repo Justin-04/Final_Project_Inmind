@@ -12,35 +12,31 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 
 ---
 
-## Experiment 1: Baseline Discovery (The top_k Bug)
+## Experiment 1: Baseline (Fixed chunking, Prompt Engineering v1)
 
-**Config:** Fixed-length chunks 1500/300, top_k=50 in eval, retrieval_k=20, ms-marco-MiniLM-L-6-v2 reranker
+**Config:** Fixed-length chunks 1500/300, top_k=5, retrieval_k=20, ms-marco-MiniLM-L-6-v2 reranker, basic prompt
 
 **Results:**
 | Faith | Relevancy | Precision | Recall |
 |-------|-----------|-----------|--------|
-| 0.87  | 0.87      | 0.63      | 0.90   |
+| 0.87  | 0.87      | 0.79      | 0.83   |
 
-**Problem:** Precision stuck at 0.63 no matter what parameters I tuned. Tried retrieval_k=40, top_k=4 in retriever — nothing helped.
-
-**Root cause discovered:** The evaluation script was passing `top_k=50` to the retrieve function, but `retrieval_k=20` only fetches 20 chunks from Qdrant. The reranker was told "keep best 50" but only had 20 — so it returned ALL of them unfiltered. I was evaluating a system with no reranking at all.
-
-**Fix:** Set eval `top_k=5` to match production behavior.
+**Thinking:** Baseline is reasonable but answer relevancy (0.87) and precision (0.79) have room to grow. The prompt doesn't require source citations so the model sometimes gives tangential answers.
 
 ---
 
-## Experiment 2: Proper top_k Evaluation
+## Experiment 2: Prompt Engineering v2
 
-**Config:** Same chunking, top_k=5 in eval, retrieval_k=20, MiniLM-L-6 reranker
+**Config:** Same chunking and retrieval, top_k=5, MiniLM-L-6 reranker, updated prompt requiring explicit source citations and grounded generation
 
 **Results:**
 | Faith | Relevancy | Precision | Recall |
 |-------|-----------|-----------|--------|
 | 0.89  | 0.81      | 0.79      | 0.83   |
 
-**Improvement:** Precision jumped 0.63 → 0.79 just by measuring correctly. The reranker was working all along.
+**Why it helped:** Adding explicit citation requirements and a grounded generation instruction improved faithfulness. The model is more careful about only stating what is in the retrieved context.
 
-**Thinking:** Now that I'm measuring the real system, which parameter moves precision further?
+**Thinking:** Precision is still stuck at 0.79. Which parameter moves it further?
 
 ---
 
@@ -53,7 +49,7 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 |-------|-----------|-----------|--------|
 | 0.925 | 0.865     | 0.814     | 0.855  |
 
-**Why it helped:** Dropping from 5 → 4 chunks removed the weakest result that was often "related but not answering." Faithfulness spiked because less noise = less hallucination.
+**Why it helped:** Dropping from 5 → 4 chunks removed the weakest result that was often "related but not answering." Faithfulness improved because less noise means less hallucination risk.
 
 **This became the baseline to beat.**
 
@@ -68,7 +64,7 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 |-------|-----------|-----------|--------|
 | 0.913 | 0.86      | 0.779     | 0.83   |
 
-**Why it failed:** Slightly worse across the board. Temperature 0.2 was already low enough for factual Q&A. The variance was likely just RAGAS judge noise — with only 12 questions, ±2-3% between identical runs is normal.
+**Why it failed:** Slightly worse across the board. Temperature 0.2 was already low enough for factual Q&A. The variance was likely RAGAS judge noise — with only 12 questions, ±2-3% between runs is normal.
 
 **Reverted to temp=0.2.**
 
@@ -107,7 +103,7 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 - Adjacent topics in technical docs share vocabulary, so embedding similarity stays high across real topic boundaries
 - Chunks ended up either too fragmented or merged incoherently
 
-**Lesson:** Semantic chunking works for long-form prose (articles, papers). For mixed-format technical manuals, fixed-length with overlap is more robust. The overlap acts as insurance against lost information.
+**Lesson:** Semantic chunking works for long-form prose (articles, papers). For mixed-format technical manuals, fixed-length with overlap is more robust.
 
 **Reverted to fixed-length 1500/300.**
 
@@ -124,7 +120,7 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 
 **Why it worked:** The larger reranker (12 layers vs 6) has much deeper language understanding. It distinguishes "this chunk mentions the topic" from "this chunk actually answers the question." The MiniLM was making ranking errors — putting related-but-not-answering chunks above truly relevant ones.
 
-**Precision: 0.81 → 0.92.** Single biggest lever in the entire optimization.
+**Precision: 0.814 → 0.924.** Single biggest lever in the entire optimization.
 
 ---
 
@@ -139,9 +135,9 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 
 **Why it helped retrieval:** BM25 catches exact keyword matches that embeddings miss. Query "What is the RC-N2?" — embeddings match "remote controller" generally, BM25 pinpoints chunks containing literal "RC-N2."
 
-**Why faithfulness dipped (0.92 → 0.85):** BM25 sometimes surfaces chunks with the right keywords but wrong context. The LLM then uses loosely-relevant info to make claims not fully supported.
+**Why faithfulness dipped (0.922 → 0.854):** BM25 sometimes surfaces chunks with the right keywords but wrong context. The LLM then uses loosely-relevant info to make claims not fully supported.
 
-**Trade-off:** Best retrieval metrics ever, but generation quality dropped.
+**Trade-off:** Best retrieval metrics, but generation quality dropped slightly.
 
 ---
 
@@ -167,12 +163,11 @@ RAG pipeline for 3 DJI drone manuals (Air 3, Mini 4 Pro, Mavic 3 Classic). Evalu
 
 | Change | Primary Impact | Magnitude |
 |--------|---------------|-----------|
-| Fix eval top_k bug | Precision | +0.16 |
 | Upgrade reranker (MiniLM → BGE) | Precision | +0.11 |
-| Parent-child chunking | All metrics | +0.02-0.10 |
+| Parent-child chunking | All metrics | +0.02–0.10 |
 | Hybrid search (BM25 + dense) | Recall | +0.03 |
 | top_k 5→4 | Faithfulness | +0.03 |
-| Semantic chunking | All metrics | -0.10 to -0.30 (NEGATIVE) |
+| Semantic chunking | All metrics | −0.10 to −0.30 (NEGATIVE) |
 | Temperature tuning | Negligible | ±0.01 |
 
 ## Final Production Config

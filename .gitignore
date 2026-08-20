@@ -29,7 +29,7 @@ share/python-wheels/
 MANIFEST
 qdrant-backup.zip
 /model
-
+/qdrant-backup
 # Virtual Environments
 venv/
 ENV/

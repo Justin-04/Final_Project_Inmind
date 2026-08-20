@@ -64,7 +64,7 @@ Examples:
 
 
 class RAGAgent:
-    """LLM-powered retrieval agent that plans and executes searches."""
+    """LLM-powered retrieval agent that plans and executes searches with query rewriting on failure."""
 
     def __init__(self, mcp_url: str = None):
         self.mcp_url = mcp_url or MCP_SERVER_URL
@@ -74,10 +74,12 @@ class RAGAgent:
     def execute(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         LLM plans the search strategy, then executes it.
+        If results are weak/empty, rewrites the query and retries once.
 
         1. LLM analyzes query → produces search plan
         2. Execute each search in the plan
-        3. Return merged chunks
+        3. If chunks are empty or weak → rewrite query and retry
+        4. Return merged chunks
 
         Args:
             query: User's question.
@@ -90,17 +92,93 @@ class RAGAgent:
         search_plan = self._plan_search(query, conversation_history)
 
         # Step 2: Execute searches
+        all_chunks = self._execute_searches(search_plan, query)
+
+        # Step 3: Evaluate — if no chunks found, rewrite and retry
+        if not all_chunks:
+            logger.info("RAG agent: 0 chunks on first attempt — rewriting query...")
+            print("   [RAG] No results — attempting query rewrite...")
+
+            rewritten_plan = self._rewrite_query(query, search_plan)
+            all_chunks = self._execute_searches(rewritten_plan, query)
+
+            if all_chunks:
+                logger.info(f"RAG agent: query rewrite succeeded — {len(all_chunks)} chunks")
+                print(f"   [RAG] Rewrite succeeded! Got {len(all_chunks)} chunks")
+            else:
+                logger.info("RAG agent: query rewrite also returned 0 chunks")
+                print("   [RAG] Rewrite also failed — no relevant content found")
+
+        else:
+            logger.info(f"RAG agent: {len(search_plan)} searches → {len(all_chunks)} chunks")
+
+        return {"chunks": all_chunks, "query": query}
+
+    def _execute_searches(self, search_plan: List[Dict], original_query: str) -> List[Dict[str, Any]]:
+        """Execute all searches in the plan and return merged chunks."""
         all_chunks = []
         for search in search_plan:
             chunks = self._search_mcp(
-                query=search.get("query", query),
+                query=search.get("query", original_query),
                 drone_model=search.get("drone_model"),
                 top_k=search.get("top_k", 4),
             )
             all_chunks.extend(chunks)
+        return all_chunks
 
-        logger.info(f"RAG agent: {len(search_plan)} searches → {len(all_chunks)} chunks")
-        return {"chunks": all_chunks, "query": query}
+    def _rewrite_query(self, original_query: str, failed_plan: List[Dict]) -> List[Dict]:
+        """
+        LLM rewrites the query when first attempt returns no results.
+        Strategies: remove filters, expand acronyms, use synonyms, broaden search.
+        """
+        failed_queries = [s.get("query", "") for s in failed_plan]
+        failed_filters = [s.get("drone_model") for s in failed_plan]
+
+        rewrite_prompt = f"""The following search queries returned NO results from a DJI drone manual vector database:
+
+Queries tried: {failed_queries}
+Filters used: {failed_filters}
+Original user question: "{original_query}"
+
+The database contains DJI drone user manuals with technical specs, instructions, and troubleshooting.
+
+Rewrite the search to find relevant content. Strategies:
+- Remove drone_model filters (search across all manuals)
+- Expand acronyms (e.g., "RC-N2" → "remote controller RC-N2")
+- Use synonyms or related terms
+- Break compound questions into simpler searches
+- Use terms likely found in a technical manual
+
+Respond with ONLY a JSON object:
+{{"searches": [{{"query": "rewritten query", "drone_model": null, "top_k": 6}}]}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You rewrite failed search queries to improve retrieval from a technical manual database."},
+                    {"role": "user", "content": rewrite_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=200,
+            )
+
+            text = response.choices[0].message.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(text)
+
+            searches = result.get("searches", [])
+            # Limit to max 3 rewritten queries to control latency
+            searches = searches[:3]
+            logger.info(f"RAG rewrite: {[s.get('query') for s in searches]}")
+            print(f"   [RAG] Rewritten queries: {[s.get('query') for s in searches]}")
+            return searches if searches else [{"query": original_query, "drone_model": None, "top_k": 6}]
+
+        except Exception as e:
+            logger.warning(f"Query rewrite failed: {e}")
+            # Fallback: remove all filters and increase top_k
+            return [{"query": original_query, "drone_model": None, "top_k": 6}]
 
     def _plan_search(self, query: str, history: List[Dict[str, str]] = None) -> List[Dict]:
         """Use LLM to plan the retrieval strategy."""

@@ -31,9 +31,8 @@ load_dotenv()
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6380")
-COLLECTION_NAME = "dji_manuals_parent_child"
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
+
+from tools.config import COLLECTION_NAME, EMBEDDING_MODEL, EMBEDDING_DIM
 LLM_MODEL = "gpt-4o-mini"
 TOP_K = 4
 RETRIEVAL_K = 30  # More candidates since children are smaller
@@ -397,17 +396,11 @@ def retrieve(
     6. Store result in cache
     7. Return top_k with parent_text as the context
     """
-    # Step 0: Embed query — include drone filter in embedding for cache differentiation
+    # Step 0: Embed query — include drone filter in embedding for differentiation
     cache_query = f"{drone_filter} {query}" if drone_filter else query
     query_embedding = embed_query(cache_query)
 
-    # Step 1: Check cache (works for all queries — filter is baked into the embedding key)
-    if use_cache:
-        cached = cache_lookup(query_embedding)
-        if cached:
-            return cached["chunks"]
-
-    # Step 2: Full retrieval pipeline (use original query for search, not cache_query)
+    # Step 2: Full retrieval pipeline
     search_embedding = embed_query(query) if drone_filter else query_embedding
     semantic_results = retrieve_semantic(query, search_embedding, top_k=RETRIEVAL_K)
     bm25_results = retrieve_bm25(query, top_k=RETRIEVAL_K)
@@ -450,10 +443,7 @@ def retrieve(
             "metadata": chunk["metadata"],
         })
 
-    # Step 6: Store in cache (cache key includes drone filter for differentiation)
-    if use_cache:
-        cache_store(cache_query, query_embedding, "", output)
-
+    # Step 6: Return results (no MCP-level caching — handled by agent-system-a)
     return output
 
 
@@ -544,8 +534,8 @@ def query_with_cache(
     )
     answer = generate_answer(query, chunks)
 
-    # Store in cache (answer + chunks)
-    if not (drone_filter or topic_filter or modality_filter):
+    # Store in cache (only if we got meaningful results)
+    if not (drone_filter or topic_filter or modality_filter) and chunks:
         if query_embedding is None:
             query_embedding = embed_query(query)
         cache_store(query, query_embedding, answer, chunks)

@@ -129,6 +129,12 @@ _ERROR_PHRASES = [
     "service unavailable",
     "timed out",
     "no response generated",
+    "does not contain",
+    "cannot provide",
+    "no context available",
+    "no information available",
+    "not contain information",
+    "please check the relevant manual",
 ]
 
 
@@ -138,7 +144,7 @@ def _is_error_response(response: str, result: dict) -> bool:
 
     Two checks:
     1. Structural: if the specialist agent returned no useful data (0 chunks, 0 vendors, error field)
-    2. Text: if response contains known infrastructure error phrases
+    2. Text: if response contains known error/empty-result phrases
     """
     # Check if any agent returned an explicit error
     for key in ("rag_result", "diagnostic_result", "pricing_result"):
@@ -157,9 +163,12 @@ def _is_error_response(response: str, result: dict) -> bool:
         if not diag_result.get("error_codes") and not diag_result.get("rag_chunks"):
             return True
 
-    # Check for infrastructure error phrases
+    # Check response text for "I don't have this info" patterns
     response_lower = response.lower()
-    return any(phrase in response_lower for phrase in _ERROR_PHRASES)
+    if any(phrase in response_lower for phrase in _ERROR_PHRASES):
+        return True
+
+    return False
 
 
 def _get_tools_executed(result: dict) -> list:
@@ -318,6 +327,7 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
             "rag_result": None,
             "diagnostic_result": None,
             "pricing_result": None,
+            "tutorial_result": None,
             "final_response": "",
         })
 
@@ -442,6 +452,7 @@ async def chat_stream(request: ChatRequest, user: dict = Depends(get_current_use
                 "rag_result": None,
                 "diagnostic_result": None,
                 "pricing_result": None,
+                "tutorial_result": None,
                 "final_response": "",
             })
 
@@ -486,6 +497,55 @@ async def admin_ingest(request: dict, user: dict = Depends(require_admin)):
 
     if not all([pdf_file, drone_model, source_name]):
         raise HTTPException(status_code=400, detail="pdf_file, drone_model, and source_name are required")
+
+    # Validate file is a PDF (check filename extension)
+    if not source_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted. File must end with .pdf")
+
+    # LLM content validation: check if the document is drone-related
+    try:
+        import base64
+        pdf_bytes = base64.b64decode(pdf_file)
+        # Extract first ~2000 chars of text for validation
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = tmp.name
+
+        try:
+            import fitz
+            doc = fitz.open(tmp_path)
+            sample_text = ""
+            for page_num in range(min(3, len(doc))):  # First 3 pages
+                sample_text += doc[page_num].get_text("text")[:800]
+            doc.close()
+        finally:
+            os.unlink(tmp_path)
+
+        if sample_text.strip():
+            from openai import OpenAI as _OpenAI
+            _client = _OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            validation = _client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You validate whether a document is related to DJI drones, UAVs, or drone technology. Respond with ONLY 'yes' or 'no'."},
+                    {"role": "user", "content": f"Is this document related to DJI drones or drone technology?\n\nFirst pages content:\n{sample_text[:1500]}"},
+                ],
+                temperature=0.0,
+                max_tokens=5,
+            )
+            answer = validation.choices[0].message.content.strip().lower()
+            if answer != "yes":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Document rejected: content does not appear to be related to DJI drones. Only DJI drone manuals and documentation are accepted."
+                )
+            logger.info(f"Ingestion validation passed for '{source_name}'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Ingestion validation skipped: {e}")
+        # If validation fails (e.g., can't parse PDF), proceed anyway
 
     try:
         async with httpx.AsyncClient(timeout=600) as client:
@@ -570,6 +630,17 @@ async def admin_delete_document(source_name: str, user: dict = Depends(require_a
         if data.get("status") == "success":
             output = data["output"]
             is_deleted = output.get("status") == "deleted"
+
+            # Invalidate agent-level response cache (document removed = cached answers may be stale)
+            if is_deleted and response_cache and response_cache.available:
+                try:
+                    keys = response_cache.redis.keys("agent_response_cache:*")
+                    if keys:
+                        response_cache.redis.delete(*keys)
+                        logger.info(f"Cache invalidated: cleared {len(keys)} entries after deleting '{source_name}'")
+                except Exception as cache_err:
+                    logger.warning(f"Cache invalidation failed: {cache_err}")
+
             return {
                 "deleted": is_deleted,
                 "source": source_name,

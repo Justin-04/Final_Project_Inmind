@@ -17,6 +17,7 @@ from src.graph.nodes import (
     rag_agent_node,
     diagnostic_agent_node,
     pricing_agent_node,
+    tutorial_agent_node,
     summarizer_node,
 )
 
@@ -62,36 +63,14 @@ def multi_router_node(state: AgentState) -> dict:
         elif route == "pricing_agent":
             result = pricing_agent_node(state)
             results.update(result)
+        elif route == "tutorial_agent":
+            result = tutorial_agent_node(state)
+            results.update(result)
 
     return results
 
 
 def build_graph():
-    """
-    Build the full agent-system-a LangGraph.
-
-    ┌──────────────┐
-    │ input_guard   │
-    └──────┬───────┘
-           │ (safe?)
-    ┌──────▼───────┐     ┌──────────┐
-    │  classifier   │     │ BLOCKED  │ → END
-    └──────┬───────┘     └──────────┘
-           │
-    ┌──────▼───────┐
-    │  supervisor   │
-    └──────┬───────┘
-           │ (routes)
-    ┌──────▼───────┐
-    │ multi_router  │  ← calls 1+ agents based on routes list
-    └──────┬───────┘
-           │
-    ┌──────▼───────┐
-    │  summarizer   │
-    └──────┬───────┘
-           │
-          END
-    """
     graph = StateGraph(AgentState)
 
     # --- Nodes ---

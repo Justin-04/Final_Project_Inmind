@@ -54,9 +54,10 @@ def query_dji_manual_vector_db(
     Pipeline: embed → cache check → dense + BM25 → parent dedup → rerank → top-k.
     Returns parent chunks (1500 chars) with metadata and image paths.
     """
-    from tools.qdrant_rag_tool import query_dji_manual_vector_db as _search
-    return _search(query=query, drone_model=drone_model, top_k=top_k,
-                   topic_filter=topic_filter, modality_filter=modality_filter)
+    from tools.retrieval import retrieve as _search
+    return _search(query=query, drone_filter=drone_model, top_k=top_k,
+                   topic_filter=topic_filter, modality_filter=modality_filter,
+                   use_reranker=True, use_cache=True)
 
 
 # ── Tool 2: Error Code Lookup ────────────────────────────────────────────────
@@ -85,18 +86,10 @@ def ingest_and_index_pdf(
     Admin tool: Extract PDF (text + images with GPT-4o captions to S3),
     then ingest with parent-child chunking strategy into Qdrant.
     """
-    from tools.extraction import extract_pdf_pages
-    from tools.ingestion import ingest_pages
+    from tools.documents_tool import upload_and_ingest as _ingest
 
     pdf_bytes = base64.b64decode(file_bytes_b64)
-
-    # Step 1: Extract text + images (with S3 upload + GPT-4o captions)
-    pages = extract_pdf_pages(pdf_bytes, filename, drone_model)
-
-    # Step 2: Parent-child chunking + embed + index to Qdrant
-    result = ingest_pages(pages, drone_model, filename)
-
-    return result
+    return _ingest(pdf_bytes, filename, drone_model, caption_images=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +147,7 @@ async def call_tool(request: dict):
     Request: {"tool_name": str, "arguments": dict}
     Response: {"status": "success", "output": ...} or {"status": "error", "error": str}
     """
-    from tools.qdrant_rag_tool import query_dji_manual_vector_db as _search
+    from tools.retrieval import retrieve as _search
     from tools.error_code_tool import lookup_dji_error_code_db as _lookup
     from tools.documents_tool import list_documents as _list_docs, delete_document as _delete_doc, upload_and_ingest as _ingest
 
@@ -165,7 +158,12 @@ async def call_tool(request: dict):
 
     try:
         if tool_name == "query_dji_manual_vector_db":
-            output = _search(**arguments)
+            # Map drone_model → drone_filter to match retrieve() signature
+            args = dict(arguments)
+            args["drone_filter"] = args.pop("drone_model", None)
+            args.setdefault("use_reranker", True)
+            args.setdefault("use_cache", True)
+            output = _search(**args)
 
         elif tool_name == "lookup_dji_error_code_db":
             output = _lookup(**arguments)
@@ -175,7 +173,7 @@ async def call_tool(request: dict):
                 pdf_bytes = base64.b64decode(arguments["file_bytes_b64"])
                 filename = arguments.get("filename", "upload.pdf")
                 drone_model = arguments.get("drone_model", "unknown")
-                caption = arguments.get("caption_images", False)
+                caption = arguments.get("caption_images", True)
                 output = _ingest(pdf_bytes, filename, drone_model, caption)
             else:
                 output = {"error": "file_bytes_b64 is required"}

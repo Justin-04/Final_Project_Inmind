@@ -249,6 +249,74 @@ async def get_pricing_by_part_legacy(part_id: str):
     return result.model_dump()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# YouTube Tutorial Search
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TutorialRequest(BaseModel):
+    query: str = Field(..., description="Tutorial search query (e.g., 'how to fly DJI Air 3')")
+    drone_model: str = Field(default="", description="Optional drone model for context")
+    max_results: int = Field(default=5, description="Number of videos to return")
+
+
+class TutorialVideo(BaseModel):
+    title: str
+    url: str
+    channel: str = ""
+    duration: str = ""
+    thumbnail: str = ""
+
+
+class TutorialResponse(BaseModel):
+    query: str
+    videos: List[TutorialVideo] = []
+    error: Optional[str] = None
+
+
+@app.post("/v1/tutorials", response_model=TutorialResponse)
+async def search_tutorials(request: TutorialRequest):
+    """
+    Search YouTube for DJI drone tutorial videos using SerpAPI.
+    Returns video titles, URLs, channels, and thumbnails.
+    """
+    try:
+        serpapi_key = os.getenv("SERPAPI_KEY", "")
+        if not serpapi_key:
+            return TutorialResponse(query=request.query, error="SERPAPI_KEY not configured")
+
+        from serpapi import GoogleSearch
+
+        search_query = request.query
+        if request.drone_model and request.drone_model.lower() not in search_query.lower():
+            search_query = f"DJI {request.drone_model} {search_query}"
+
+        params = {
+            "engine": "youtube",
+            "search_query": search_query,
+            "api_key": serpapi_key,
+        }
+
+        search = GoogleSearch(params)
+        data = search.get_dict()
+
+        videos = []
+        for item in data.get("video_results", [])[:request.max_results]:
+            videos.append(TutorialVideo(
+                title=item.get("title", ""),
+                url=item.get("link", ""),
+                channel=item.get("channel", {}).get("name", "") if isinstance(item.get("channel"), dict) else "",
+                duration=item.get("length", {}).get("text", "") if isinstance(item.get("length"), dict) else "",
+                thumbnail=item.get("thumbnail", {}).get("static", "") if isinstance(item.get("thumbnail"), dict) else "",
+            ))
+
+        logger.info(f"Tutorial search: '{search_query}' → {len(videos)} videos")
+        return TutorialResponse(query=search_query, videos=videos)
+
+    except Exception as e:
+        logger.error(f"Tutorial search error: {e}")
+        return TutorialResponse(query=request.query, error=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)

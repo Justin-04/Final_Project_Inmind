@@ -8,7 +8,7 @@ A production-ready multi-agent AI system for DJI drone support. Handles technica
 
 ### System Overview
 
-![Agent System A - LangGraph Pipeline](./assets/agent-system-a-graph.png)
+![Agent System A - LangGraph Pipeline](./Agent-Diagram.jpg)
 *Complete LangGraph workflow showing security checks, classification, routing, and specialist agents*
 
 ### Infrastructure Components

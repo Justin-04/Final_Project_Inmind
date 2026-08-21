@@ -6,6 +6,13 @@ A production-ready multi-agent AI system for DJI drone support. Handles technica
 
 ## Architecture
 
+### System Overview
+
+![Agent System A - LangGraph Pipeline](./assets/agent-system-a-graph.png)
+*Complete LangGraph workflow showing security checks, classification, routing, and specialist agents*
+
+### Infrastructure Components
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                              USER (Browser)                                      │
@@ -58,6 +65,60 @@ A production-ready multi-agent AI system for DJI drone support. Handles technica
   │(Vectors)│  │ (Cache)  │  │(Convos) │
   └─────────┘  └─────────┘  └─────────┘
 ```
+
+**Key Features:**
+- **Input Guard**: LLM-powered security checks (prompt injection, jailbreak detection)
+- **BERT Fast-Path**: 50ms classification (toggleable via UI)
+- **Multi-Router**: Handles queries spanning multiple domains (e.g., "specs AND pricing")
+- **4 Specialist Agents**: RAG (technical), Diagnostic (errors), Pricing (web), Tutorial (YouTube)
+- **Output Guard**: Hallucination filtering before response
+
+*Full pipeline documentation with state schema and example traces: [services/agent-system-a/AGENT_GRAPH.md](services/agent-system-a/AGENT_GRAPH.md)*
+
+---
+
+## System Demo
+
+![System Demo with Caching](./Demo+Cache.png)
+*Frontend interface showing multi-agent response with semantic cache hit indicator*
+
+---
+
+## Observability & Monitoring
+
+### LangSmith Tracing
+![LangSmith Dashboard](./assets/langsmith-dashboard.png)
+*Real-time trace visualization showing agent execution flow, token usage, and latency metrics*
+
+### LangFuse Analytics
+![LangFuse Analytics](./assets/langfuse-analytics.png)
+*Cost tracking, model performance metrics, and conversation analytics*
+
+---
+
+## AWS Deployment Architecture
+
+![AWS Architecture Diagram](./aws_architecture.drawio.png)
+
+**Infrastructure Components:**
+- **EC2 Instance** (t3.medium): Hosts all Docker containers
+- **Elastic IP**: Static public IP for domain mapping
+- **S3 Bucket**: Stores uploaded PDF images and extracted content
+- **Security Groups**: Configured for ports 80 (HTTP), 8000 (API), SSH
+- **IAM Roles**: Service credentials for S3 access
+- **Docker Compose**: Manages 7 containers across 2 networks
+  - Frontend (nginx + React)
+  - Agent System A (LangGraph orchestrator)
+  - Agent System B (ReAct pricing/tutorial agent)
+  - MCP Server (tool server)
+  - Qdrant (vector database)
+  - Redis (cache layer)
+  - MongoDB (conversation storage)
+
+**CI/CD Pipeline:**
+- GitHub Actions workflow triggers on `push` to `main`
+- SSH into EC2, pulls latest code, rebuilds containers
+- Zero-downtime deployment using Docker Compose rolling updates
 
 ---
 

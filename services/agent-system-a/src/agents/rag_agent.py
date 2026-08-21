@@ -68,18 +68,20 @@ class RAGAgent:
 
     def __init__(self, mcp_url: str = None):
         self.mcp_url = mcp_url or MCP_SERVER_URL
-        self.timeout = 120  # Increased for slower cloud environments
+
+        self.timeout = 30
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def execute(self, query: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        LLM plans the search strategy, then executes it.
-        If results are weak/empty, rewrites the query and retries once.
+        LLM plans the search strategy, executes it, and judges relevance.
+        If results are empty or judged irrelevant, rewrites the query and retries once.
 
         1. LLM analyzes query → produces search plan
         2. Execute each search in the plan
-        3. If chunks are empty or weak → rewrite query and retry
-        4. Return merged chunks
+        3. LLM judges relevance of retrieved chunks
+        4. If chunks are empty/irrelevant → rewrite query and retry
+        5. Return merged chunks
 
         Args:
             query: User's question.
@@ -94,11 +96,22 @@ class RAGAgent:
         # Step 2: Execute searches
         all_chunks = self._execute_searches(search_plan, query)
 
-        # Step 3: Evaluate — if no chunks found, rewrite and retry
+        # Step 3: LLM judges relevance (if chunks exist)
+        should_rewrite = False
         if not all_chunks:
-            logger.info("RAG agent: 0 chunks on first attempt — rewriting query...")
+            should_rewrite = True
+            logger.info("RAG agent: 0 chunks returned — rewriting query...")
             print("   [RAG] No results — attempting query rewrite...")
+        else:
+            # Ask LLM to judge if chunks are relevant
+            is_relevant = self._judge_relevance(query, all_chunks)
+            if not is_relevant:
+                should_rewrite = True
+                logger.info("RAG agent: LLM judged chunks as irrelevant — rewriting query...")
+                print("   [RAG] Chunks judged irrelevant — attempting query rewrite...")
 
+        # Step 4: Rewrite if needed
+        if should_rewrite:
             rewritten_plan = self._rewrite_query(query, search_plan)
             all_chunks = self._execute_searches(rewritten_plan, query)
 
@@ -108,9 +121,8 @@ class RAGAgent:
             else:
                 logger.info("RAG agent: query rewrite also returned 0 chunks")
                 print("   [RAG] Rewrite also failed — no relevant content found")
-
         else:
-            logger.info(f"RAG agent: {len(search_plan)} searches → {len(all_chunks)} chunks")
+            logger.info(f"RAG agent: {len(search_plan)} searches → {len(all_chunks)} chunks (relevant)")
 
         return {"chunks": all_chunks, "query": query}
 
@@ -125,6 +137,66 @@ class RAGAgent:
             )
             all_chunks.extend(chunks)
         return all_chunks
+
+    def _judge_relevance(self, query: str, chunks: List[Dict[str, Any]]) -> bool:
+        """
+        LLM judges whether retrieved chunks can answer the user's question.
+        Returns True if relevant, False if irrelevant (triggers rewrite).
+        """
+        # Limit chunks sent to LLM (use top 3 by rerank score)
+        sorted_chunks = sorted(chunks, key=lambda c: c.get("rerank_score", 0), reverse=True)
+        top_chunks = sorted_chunks[:3]
+
+        # Build chunk preview (truncate text to ~200 chars each)
+        chunk_previews = []
+        for i, chunk in enumerate(top_chunks, 1):
+            text = chunk.get("text", "")[:200]
+            score = chunk.get("rerank_score", 0)
+            chunk_previews.append(f"[Chunk {i}, score={score:.2f}]: {text}...")
+
+        chunks_text = "\n\n".join(chunk_previews)
+
+        judge_prompt = f"""You are evaluating whether retrieved document chunks can answer a user's question.
+
+User Question: "{query}"
+
+Retrieved Chunks:
+{chunks_text}
+
+Can these chunks be used to answer the user's question?
+- Answer "YES" if the chunks contain relevant information (specs, instructions, facts) that address the question
+- Answer "NO" if the chunks are off-topic, vague, or don't contain useful information
+
+Respond with ONLY a JSON object:
+{{"relevant": true/false, "reasoning": "brief explanation"}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You judge whether document chunks are relevant to answer a question. Be strict but fair."},
+                    {"role": "user", "content": judge_prompt},
+                ],
+                temperature=0.0,
+                max_tokens=100,
+            )
+
+            text = response.choices[0].message.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(text)
+
+            is_relevant = result.get("relevant", True)  # Default to True if parsing fails
+            reasoning = result.get("reasoning", "")
+
+            logger.info(f"LLM judge: {'RELEVANT' if is_relevant else 'IRRELEVANT'} — {reasoning}")
+            print(f"   [Judge] {'✓ Relevant' if is_relevant else '✗ Irrelevant'} — {reasoning}")
+
+            return is_relevant
+
+        except Exception as e:
+            logger.warning(f"Relevance judgment failed: {e} — assuming relevant")
+            return True  # Fail-open: if judge fails, don't trigger rewrite
 
     def _rewrite_query(self, original_query: str, failed_plan: List[Dict]) -> List[Dict]:
         """

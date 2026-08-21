@@ -20,13 +20,16 @@ export interface ConversationMeta {
 const suggestions = [
   'What is the max speed of the DJI Air 3?',
   'Error code E001',
+  'Show me the dji air 3 diagram',
+  'How much does the dji neo weigh?',
   'How much is the DJI Mini 4 Pro?',
-  'Error code E001 and weight of Mini 4 Pro?',
-  'Compare flight time of Air 3 and Mini 4 Pro',
-  'How to fly the DJI Air 3?',
+  'Weight of Air 3? And its price?',
+  'Which is heavier, dji air 3 or mini 4 pro?',
+  'Show me a beginner\'s tutorial for flying the DJI Air 3.',
   'What sensors does Air 3 have for obstacle avoidance?',
   'Can I fly in the rain?',
 ];
+
 
 interface SidebarProps {
   conversations: ConversationMeta[];

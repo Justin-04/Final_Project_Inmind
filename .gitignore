@@ -34,7 +34,7 @@ qdrant-backup.zip
 venv/
 ENV/
 env/
-
+/report
 # IDEs
 .vscode/
 .idea/
@@ -42,7 +42,6 @@ env/
 *.swo
 *~
 .DS_Store
-
 # Docker
 docker-compose.override.yml
 
